@@ -30,6 +30,7 @@ BASE     = os.environ.get("C8_BASE", "http://localhost:2975")
 IDP      = os.environ.get("C8_IDP")                    # set => DevNet mode
 CID      = os.environ.get("C8_CLIENT_ID", "hackathon")
 CSEC     = os.environ.get("C8_CLIENT_SECRET")
+ACCESS_TOKEN = os.environ.get("C8_ACCESS_TOKEN")
 SECRET   = os.environ.get("C8_JWT_SECRET", "unsafe").encode()
 AUD      = os.environ.get("C8_AUD", "https://canton.network.global")
 USER     = os.environ.get("C8_USER", "ledger-api-user")
@@ -62,6 +63,12 @@ class LabError(Exception):
 
 
 def token(sub=USER):
+    if ACCESS_TOKEN:
+        if sub != USER:
+            raise LabError(
+                f"C8_ACCESS_TOKEN is scoped to C8_USER={USER!r}; refusing to "
+                f"reuse it as {sub!r}.")
+        return ACCESS_TOKEN
     if IDP:
         if not CSEC:
             raise LabError("C8_IDP is set but C8_CLIENT_SECRET is not.")
@@ -336,7 +343,9 @@ def accept_transfer(instruction_cid, receiver, sub=USER):
 def check():
     """Run this first when something is broken."""
     print(f"base       {BASE}")
-    print(f"mode       {'DevNet / Keycloak' if IDP else 'LocalNet / unsafe HS256'}")
+    mode = ("pre-minted bearer token" if ACCESS_TOKEN else
+            "DevNet / Keycloak" if IDP else "LocalNet / unsafe HS256")
+    print(f"mode       {mode}")
     print(f"registry   {(REGISTRY + REGISTRY_PREFIX) if REGISTRY else '(not set, transfers will fail)'}")
     if IDP or ADMIN_PARTY:
         print(f"admin      {ADMIN_PARTY or '(DSO, correct for Amulet only)'}")

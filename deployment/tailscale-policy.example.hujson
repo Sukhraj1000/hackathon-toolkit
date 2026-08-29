@@ -1,0 +1,59 @@
+{
+  // Replace these addresses before merging this fragment into the tailnet's
+  // existing policy. Do not replace an existing policy wholesale.
+  "groups": {
+    "group:agent-wallet-team": [
+      "alice@example.com",
+      "bob@example.com",
+    ],
+  },
+
+  "tagOwners": {
+    "tag:agent-wallet-localnet": ["autogroup:admin"],
+  },
+
+  "grants": [
+    {
+      "src": ["group:agent-wallet-team"],
+      "dst": ["tag:agent-wallet-localnet"],
+      "ip": ["tcp:2975", "tcp:8401"],
+    },
+  ],
+
+  // These assertions make a policy update fail if it exposes a known
+  // LocalNet, database, Docker, admin, UI, or SSH endpoint to the team.
+  "tests": [
+    {
+      "src": "alice@example.com",
+      "proto": "tcp",
+      "accept": [
+        "tag:agent-wallet-localnet:2975",
+        "tag:agent-wallet-localnet:8401",
+      ],
+      "deny": [
+        "tag:agent-wallet-localnet:22",
+        "tag:agent-wallet-localnet:443",
+        "tag:agent-wallet-localnet:2000",
+        "tag:agent-wallet-localnet:2375",
+        "tag:agent-wallet-localnet:2376",
+        "tag:agent-wallet-localnet:2901",
+        "tag:agent-wallet-localnet:2902",
+        "tag:agent-wallet-localnet:2903",
+        "tag:agent-wallet-localnet:3001",
+        "tag:agent-wallet-localnet:3901",
+        "tag:agent-wallet-localnet:3902",
+        "tag:agent-wallet-localnet:3903",
+        "tag:agent-wallet-localnet:3975",
+        "tag:agent-wallet-localnet:4000",
+        "tag:agent-wallet-localnet:4901",
+        "tag:agent-wallet-localnet:4902",
+        "tag:agent-wallet-localnet:4903",
+        "tag:agent-wallet-localnet:4975",
+        "tag:agent-wallet-localnet:5432",
+        "tag:agent-wallet-localnet:8443",
+        "tag:agent-wallet-localnet:9443",
+        "tag:agent-wallet-localnet:10443",
+      ],
+    },
+  ],
+}

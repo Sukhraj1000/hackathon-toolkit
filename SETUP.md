@@ -118,6 +118,14 @@ instead. For the browser UIs, add to `/etc/hosts`:
 127.0.0.1  wallet.localhost
 ```
 
+### Sharing LocalNet for the agent-wallet demo
+
+Do not publish the Compose ports on your LAN or expose the Docker socket. The
+agent-wallet setup binds every container service to loopback, provisions
+separate owner/agent/merchant ledger identities, and uses a narrow Tailscale
+grant for TCP 2975 and 8401 only. Follow `LOCALNET_TEAM_ACCESS.md`; the setup
+includes checks to run both on the host and from a teammate's machine.
+
 ## Daml toolchain
 
 Only for the Daml tasks. Everything else is HTTP.

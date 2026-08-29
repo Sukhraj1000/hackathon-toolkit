@@ -16,6 +16,7 @@ It runs against two targets:
 | `SETUP.md` | Install LocalNet, and the Daml toolchain if you need it |
 | `API.md` | Tested cheat sheet of the APIs you will use, and what needs a token |
 | `TROUBLESHOOTING.md` | Every error we actually hit, and the fix |
+| `LOCALNET_TEAM_ACCESS.md` | Least-privilege shared LocalNet setup for the agent-wallet demo |
 | `c8lab.py` | The lab |
 | `daml-starter/` | Working Daml to copy from, including the mandate task |
 
