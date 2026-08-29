@@ -1,0 +1,9 @@
+README.md
+pyproject.toml
+src/canton8_hack/__init__.py
+src/canton8_hack/main.py
+src/canton8_hack.egg-info/PKG-INFO
+src/canton8_hack.egg-info/SOURCES.txt
+src/canton8_hack.egg-info/dependency_links.txt
+src/canton8_hack.egg-info/top_level.txt
+tests/test_main.py

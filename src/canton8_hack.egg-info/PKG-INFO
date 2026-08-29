@@ -1,0 +1,26 @@
+Metadata-Version: 2.4
+Name: canton8-hack
+Version: 0.1.0
+Summary: A new project scaffold for canton8_hack
+Author: Your Name
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+
+# canton8_hack
+
+A fresh project scaffold for your Canton8 hackathon work.
+
+## Getting started
+
+```bash
+cd canton8_hack
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+python -m canton8_hack.main
+```
+
+## Project structure
+
+- `src/canton8_hack/` - application package
+- `tests/` - test files
