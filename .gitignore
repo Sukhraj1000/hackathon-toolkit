@@ -5,3 +5,7 @@ __pycache__/
 .DS_Store
 .env
 .c8wallet-state.json
+web/node_modules/
+web/.next/
+web/out/
+web/*.tsbuildinfo
