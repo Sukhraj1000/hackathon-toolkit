@@ -19,6 +19,7 @@ It runs against two targets:
 | `LOCALNET_TEAM_ACCESS.md` | Least-privilege shared LocalNet setup for the agent-wallet demo |
 | `AGENT_WALLET.md` | Agent submitter, read-only resolver, reconciliation and safe retry design |
 | `MVP.md` | One-command LocalNet purchase demo and intentionally reduced scope |
+| `web/` | Next.js and TypeScript control surface for the MVP CLI |
 | `c8lab.py` | The lab |
 | `canton8_agent/` | Stdlib adapter for atomic `MandateUsage.Charge` execution |
 | `daml-starter/` | Working Daml to copy from, including the mandate task |
@@ -30,6 +31,9 @@ For the smallest working agent-wallet demo, start LocalNet and run
 `python3 agent_wallet_mvp.py doctor`, followed by
 `python3 agent_wallet_mvp.py demo`. The same CLI provides `status`, `buy`, and
 `statement`; see `MVP.md` for its prerequisites and deliberately reduced scope.
+
+To use the browser control surface, run `npm install` and `npm run dev` from
+`web/`, then open `http://127.0.0.1:3000`.
 
 **Looking for the problems?** They are in [`CHALLENGES.md`](CHALLENGES.md).
 
