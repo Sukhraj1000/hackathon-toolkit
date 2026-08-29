@@ -90,7 +90,9 @@ scripts/configure_tailscale_serve.sh
 
 The helper auto-detects the Homebrew userspace daemon at
 `~/.tailscale/tailscaled.sock`. For another non-default daemon socket, set
-`TAILSCALE_SOCKET` explicitly.
+`TAILSCALE_SOCKET` explicitly. It refuses to make changes while any unrelated
+Serve listener exists; remove or relocate that listener deliberately, then
+rerun the helper.
 
 To remove only these two Serve listeners later (with the same socket
 auto-detection):
@@ -108,8 +110,11 @@ loopback publishing, not tailnet policy.
 python3 scripts/verify_team_access.py localnet-host.example.ts.net
 ```
 
-It must report 2975 and 8401 open and every known sensitive LocalNet port
-blocked. Save the output with the demo notes as evidence; it contains no secret.
+It must report the Ledger API's unauthenticated `401`, a successful registry
+`/health` response, and every known sensitive LocalNet port blocked. The
+tailnet policy's allowlist and embedded tests are the exhaustive access-control
+proof; the network probe is a defence-in-depth deployment check. Save its
+output with the demo notes as evidence; it contains no secret.
 
 ## 5. Launch with the agent-only identity
 
@@ -118,12 +123,15 @@ process. Give that process only the variables shown in
 `deployment/agent.env.example`, then run the preflight in the same environment:
 
 ```bash
+python3 c8lab.py check
 python3 scripts/verify_agent_environment.py
 ```
 
-`c8lab.py` accepts `C8_ACCESS_TOKEN` and refuses to reuse that token for another
-`sub`, including `participant_admin`. Do not provide `C8_JWT_SECRET`, an owner
-token, a client secret, or access to a Docker socket.
+`C8_PARTY` must contain the agent's full party ID. In pre-minted token mode,
+`c8lab.py check` queries only that party and never switches to the participant
+administrator. It also refuses to reuse the token for another `sub`. Do not
+provide `C8_JWT_SECRET`, an owner token, a client secret, or access to a Docker
+socket.
 
 ## Development-only identity warning
 

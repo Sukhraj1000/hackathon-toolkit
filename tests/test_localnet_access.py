@@ -1,9 +1,14 @@
+import contextlib
+import io
 from pathlib import Path
 import unittest
 from unittest import mock
+import urllib.error
 
 import agent_wallet_localnet
 import c8lab
+from scripts import verify_tailscale_serve_config
+from scripts import verify_team_access
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +92,39 @@ class IdentityBoundaryTests(unittest.TestCase):
             with self.assertRaises(c8lab.LabError):
                 c8lab.token(c8lab.ADMIN)
 
+    def test_preminted_check_uses_only_configured_party(self):
+        party = self.parties["agent"]
+        with mock.patch.object(c8lab, "ACCESS_TOKEN", "agent-token"), \
+             mock.patch.object(c8lab, "CONFIGURED_PARTY", party), \
+             mock.patch.object(c8lab, "token"), \
+             mock.patch.object(c8lab, "ledger_end", return_value=1), \
+             mock.patch.object(c8lab, "holdings", return_value=[]) as holdings, \
+             mock.patch.object(c8lab, "local_parties") as local_parties:
+            with contextlib.redirect_stdout(io.StringIO()):
+                c8lab.check()
+        holdings.assert_called_once_with(party)
+        local_parties.assert_not_called()
+
+    def test_preminted_check_requires_configured_party(self):
+        with mock.patch.object(c8lab, "ACCESS_TOKEN", "agent-token"), \
+             mock.patch.object(c8lab, "CONFIGURED_PARTY", ""):
+            with self.assertRaises(c8lab.LabError):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    c8lab.check()
+
+    def test_preminted_check_rejects_inaccessible_party(self):
+        party = self.parties["owner"]
+        with mock.patch.object(c8lab, "ACCESS_TOKEN", "agent-token"), \
+             mock.patch.object(c8lab, "CONFIGURED_PARTY", party), \
+             mock.patch.object(c8lab, "token"), \
+             mock.patch.object(c8lab, "ledger_end", return_value=1), \
+             mock.patch.object(
+                 c8lab, "holdings",
+                 side_effect=c8lab.LabError("HTTP 403")):
+            with self.assertRaises(c8lab.LabError):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    c8lab.check()
+
 
 class NetworkBoundaryTests(unittest.TestCase):
     def test_tailnet_grant_has_only_two_ports(self):
@@ -108,9 +146,51 @@ class NetworkBoundaryTests(unittest.TestCase):
                 name, value = line.split("=", 1)
                 values[name] = value
         self.assertIn("C8_ACCESS_TOKEN", values)
+        self.assertIn("C8_PARTY", values)
         self.assertTrue(agent_wallet_localnet.PRIVILEGED_RIGHTS)
         for forbidden in ("C8_JWT_SECRET", "C8_CLIENT_SECRET", "C8_OWNER_TOKEN"):
             self.assertNotIn(forbidden, values)
+
+    def test_serve_config_rejects_unexpected_listener(self):
+        config = {"TCP": {
+            "2975": {"TCPForward": "127.0.0.1:2975"},
+            "443": {"HTTPS": True},
+        }}
+        errors = verify_tailscale_serve_config.validate(
+            config, allow_missing=True)
+        self.assertTrue(any("443" in error for error in errors))
+
+    def test_serve_config_requires_exact_forwards(self):
+        config = {"TCP": {
+            "2975": {"TCPForward": "127.0.0.1:9999"},
+            "8401": {"TCPForward": "127.0.0.1:8401"},
+        }}
+        errors = verify_tailscale_serve_config.validate(config)
+        self.assertTrue(any("9999" in error for error in errors))
+
+    def test_remote_probe_accepts_expected_http_statuses(self):
+        unauthorized = urllib.error.HTTPError(
+            "http://host:2975/v2/state/ledger-end", 401,
+            "Unauthorized", {}, None)
+        with mock.patch.object(
+                verify_team_access.urllib.request, "urlopen",
+                side_effect=unauthorized):
+            self.assertEqual(
+                401, verify_team_access.http_status(
+                    "host", 2975, "/v2/state/ledger-end", 1))
+
+        response = mock.MagicMock()
+        response.__enter__.return_value.status = 200
+        with mock.patch.object(
+                verify_team_access.urllib.request, "urlopen",
+                return_value=response):
+            self.assertEqual(
+                200, verify_team_access.http_status(
+                    "host", 8401, "/health", 1))
+
+    def test_remote_probe_covers_custom_gateway_ports(self):
+        for port in (8200, 8302, 8400):
+            self.assertIn(port, verify_team_access.FORBIDDEN_PORTS)
 
 
 if __name__ == "__main__":

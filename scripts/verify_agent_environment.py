@@ -51,9 +51,12 @@ def main():
                       + ", ".join(present))
 
     user = os.environ.get("C8_USER")
+    party = os.environ.get("C8_PARTY")
     token = os.environ.get("C8_ACCESS_TOKEN")
     if user != "wallet-agent":
         errors.append("C8_USER must be wallet-agent")
+    if not party or "::" not in party:
+        errors.append("C8_PARTY must be the agent's full party ID")
     if not token:
         errors.append("C8_ACCESS_TOKEN is required")
     elif jwt_subject(token) != user:

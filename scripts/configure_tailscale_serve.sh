@@ -19,6 +19,9 @@ ts() {
   fi
 }
 
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+verify_config="$script_dir/verify_tailscale_serve_config.py"
+
 ts status >/dev/null
 
 if [ "${1:-}" = "--remove" ]; then
@@ -32,8 +35,12 @@ if [ "$#" -ne 0 ]; then
   exit 2
 fi
 
+# Refuse to mutate a Serve configuration that contains any unrelated listener.
+# This avoids silently preserving an older UI, SSH, or admin route.
+ts serve status --json | python3 "$verify_config" --allow-missing
 ts serve --bg --tcp=2975 tcp://127.0.0.1:2975
 ts serve --bg --tcp=8401 tcp://127.0.0.1:8401
+ts serve status --json | python3 "$verify_config"
 ts serve status
 
 echo
