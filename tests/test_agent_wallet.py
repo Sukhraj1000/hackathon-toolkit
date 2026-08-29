@@ -136,6 +136,18 @@ class MandateAgentTests(unittest.TestCase):
         self.assertEqual([], resolver.calls)
         self.assertEqual([], ledger.submit_calls)
 
+    def test_over_cap_purchase_is_rejected_before_resolution_or_submission(self):
+        ledger = FakeLedger([authorization(
+            total_cap=Decimal("20"), spent=Decimal("10"))])
+        resolver = FakeResolver()
+
+        with self.assertRaisesRegex(AgentError, "remaining mandate cap"):
+            self.agent(ledger, resolver).charge(
+                "mandate-1", purchase(amount=Decimal("10.01")))
+
+        self.assertEqual([], resolver.calls)
+        self.assertEqual([], ledger.submit_calls)
+
     def test_non_direct_resolution_is_rejected_before_submission(self):
         ledger = FakeLedger()
         resolver = FakeResolver(resolution(transfer_kind="offer"))
