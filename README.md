@@ -18,12 +18,16 @@ It runs against two targets:
 | `TROUBLESHOOTING.md` | Every error we actually hit, and the fix |
 | `LOCALNET_TEAM_ACCESS.md` | Least-privilege shared LocalNet setup for the agent-wallet demo |
 | `AGENT_WALLET.md` | Agent submitter, read-only resolver, reconciliation and safe retry design |
+| `MVP.md` | One-command LocalNet purchase demo and intentionally reduced scope |
 | `c8lab.py` | The lab |
 | `canton8_agent/` | Stdlib adapter for atomic `MandateUsage.Charge` execution |
 | `daml-starter/` | Working Daml to copy from, including the mandate task |
 | `daml-starter-test/` | Test-only token implementation and Daml Script coverage |
 
 Start with `SETUP.md`, come back here.
+
+For the smallest working agent-wallet demo, start LocalNet and run
+`python3 agent_wallet_mvp.py`. See `MVP.md` for its prerequisites and scope.
 
 **Looking for the problems?** They are in [`CHALLENGES.md`](CHALLENGES.md).
 
