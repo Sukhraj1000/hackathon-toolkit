@@ -6,16 +6,20 @@ expiry, and revocation rules are checked by Daml.
 
 ## Build and test
 
+From the repository root:
+
 ```bash
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 export PATH="$HOME/.daml/bin:$JAVA_HOME/bin:$PATH"
 
-daml build
-daml test
+daml build --all
+(cd daml-starter-test && daml test)
+python3 -m unittest discover -s tests -v
 ```
 
-The tests run against the in-memory Daml Script ledger and require no Docker or
-external ledger.
+The Daml tests run against the in-memory Script ledger and require no Docker.
+Production contracts and test-only token implementations are separate packages,
+so the mock factory and holding cannot be uploaded with the mandate DAR.
 
 ## Contract flow
 
@@ -28,6 +32,8 @@ MandateProposal                  owner offers a complete policy
 MandateUsage
   -> Charge                      designated agent only
       -> fetch Mandate           proves authorization remains active
+      -> validate Holding views  owner, instrument/admin, lock, and coverage
+      -> TransferFactory         real Token Standard V1 direct transfer
       -> MandateUsage            successor with spend and replay marker
       -> ChargeReceipt           immutable committed-charge evidence
 
@@ -44,7 +50,9 @@ never changes after acceptance.
 party can fabricate a replacement state alone. `Charge` is a consuming choice
 controlled only by the designated agent. It fetches the static mandate, checks
 the requested purchase, then creates the usage successor and receipt in one
-transaction.
+transaction. Token movement is not a later API side effect: a completed direct
+`TransferFactory_Transfer`, the usage successor, and the receipt all commit in
+the same transaction. A pending or failed transfer aborts the whole charge.
 
 ## Ledger-enforced checks
 
@@ -63,9 +71,20 @@ assertMsg "total cap exceeded" (spentAfter <= mandate.totalCap)
 assertMsg "mandate expired" (now < mandate.expiresAt)
 ```
 
-The agent supplies only `merchant`, `amount`, and a bounded, non-empty business
-reference. Owner, agent, instrument, administrator, cap, allow-list, and expiry
-come from ledger contracts rather than client input.
+The agent supplies the purchase data plus opaque registry output in
+`TokenExecution`: a factory CID, owner Holding CIDs, and `ChoiceContext`. The
+material transfer fields are not trusted from that input. `Charge` derives
+sender, receiver, amount, full `InstrumentId`, request time, and deadline from
+the checked mandate and choice arguments. It fetches every Holding interface,
+rejects a wrong owner/instrument/admin, locked or non-positive holding, checks
+aggregate coverage, and binds the factory to `expectedAdmin` with
+`TransferFactory_PublicFetch` before exercising it.
+
+The transfer has `sender = mandate.owner`, so `TransferFactory_Transfer` still
+requires owner authorization. The agent submits only as the designated agent;
+the jointly signed, consuming `MandateUsage.Charge` supplies the ledger
+authorization context. Calling the same transfer factory directly as the agent
+is rejected.
 
 Archiving `Mandate` revokes immediately. A remaining `MandateUsage` cannot be
 charged because the first action in `Charge` is fetching that archived mandate.
@@ -101,7 +120,32 @@ create no receipt and do not advance usage.
   cannot fabricate a receipt alone;
 - both charge-versus-revoke ledger orderings preserve the intended outcome;
 - receipts expose complete audit data only to their stakeholders.
+- successful charges reduce owner token balance and increase merchant balance;
+- pending/failed transfer results, insufficient coverage, a wrong holding
+  owner or instrument, and a factory with the wrong administrator roll back
+  holdings, usage, and receipts together.
 
-Real Token Standard settlement is intentionally separate. The next integration
-step should perform the transfer inside `Charge`, in the same transaction as the
-usage successor and receipt.
+## Real LocalNet proof
+
+The opt-in integration case uploads only the production DAR, funds a fresh
+owner with real LocalNet Canton Coin, and creates distinct owner, agent,
+merchant, and resolver ledger users. The agent has only `CanActAs(agent)`; the
+resolver has only `CanReadAs(owner)` and returns transaction-scoped Holding
+disclosures. The test proves a direct transfer changes both balances and an
+offer/Pending result leaves no instruction, balance change, receipt, or usage
+advance.
+
+With Splice LocalNet 0.6.8 running on the documented default ports:
+
+```bash
+C8_RUN_LOCALNET_INTEGRATION=1 \
+  python3 -m unittest discover -s tests \
+    -p 'test_atomic_token_charge_localnet.py' -v
+```
+
+Set `C8_GRPC_HOST` or `C8_GRPC_PORT` only if DAR upload is not at
+`127.0.0.1:2901`. This test allocates ledger state and moves LocalNet tokens;
+normal unit-test discovery skips it.
+
+The pinned Token Standard V1 interface DAR provenance and checksums are in
+[`dars/README.md`](dars/README.md).

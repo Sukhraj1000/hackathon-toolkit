@@ -1,0 +1,248 @@
+module TestToken where
+
+import Daml.Script
+import Mandate (TokenExecution(..))
+import Splice.Api.Token.HoldingV1
+import Splice.Api.Token.MetadataV1
+import Splice.Api.Token.TransferInstructionV1
+
+
+data TestTransferMode
+  = TestTransferCompleted
+  | TestTransferPending
+  | TestTransferFailed
+  deriving (Show, Eq)
+
+
+-- Test-only holding implementation. This module lives outside the production
+-- package so a mock Token Standard implementation is never deployed with the
+-- mandate contracts.
+template TestHolding
+  with
+    admin : Party
+    owner : Party
+    instrumentId : InstrumentId
+    amount : Decimal
+    lock : Optional Lock
+  where
+    ensure amount > 0.0
+    signatory admin
+    observer owner
+
+    interface instance Holding for TestHolding where
+      view = HoldingView with
+        owner
+        instrumentId
+        amount
+        lock
+        meta = emptyMetadata
+
+
+consumeTestHoldings
+  : Party
+  -> Transfer
+  -> [ContractId Holding]
+  -> Update Decimal
+consumeTestHoldings admin transfer holdingCids =
+  case holdingCids of
+    [] -> pure 0.0
+    holdingInterfaceCid :: remaining -> do
+      Some (holdingCid, holding) <-
+        fetchFromInterface @TestHolding holdingInterfaceCid
+      assertMsg "test holding administrator mismatch" (holding.admin == admin)
+      assertMsg "test holding owner mismatch" (holding.owner == transfer.sender)
+      assertMsg
+        "test holding instrument mismatch"
+        (holding.instrumentId == transfer.instrumentId)
+      assertMsg "test holding is locked" (holding.lock == None)
+      archive holdingCid
+      remainingAmount <- consumeTestHoldings admin transfer remaining
+      pure (holding.amount + remainingAmount)
+
+
+completeTestTransfer
+  : Party
+  -> Transfer
+  -> Update TransferInstructionResult
+completeTestTransfer admin transfer = do
+  inputAmount <- consumeTestHoldings admin transfer transfer.inputHoldingCids
+  assertMsg "test token has insufficient funds" (inputAmount >= transfer.amount)
+
+  receiverCid <- create TestHolding with
+    admin
+    owner = transfer.receiver
+    instrumentId = transfer.instrumentId
+    amount = transfer.amount
+    lock = None
+  senderChangeCids <- if inputAmount > transfer.amount
+    then do
+      changeCid <- create TestHolding with
+        admin
+        owner = transfer.sender
+        instrumentId = transfer.instrumentId
+        amount = inputAmount - transfer.amount
+        lock = None
+      pure [toInterfaceContractId changeCid]
+    else pure []
+
+  pure TransferInstructionResult with
+    output = TransferInstructionResult_Completed with
+      receiverHoldingCids = [toInterfaceContractId receiverCid]
+    senderChangeCids
+    meta = emptyMetadata
+
+
+template TestTransferFactory
+  with
+    admin : Party
+    mode : TestTransferMode
+  where
+    signatory admin
+
+    interface instance TransferFactory for TestTransferFactory where
+      view = TransferFactoryView with admin; meta = emptyMetadata
+
+      transferFactory_publicFetchImpl _ arg = do
+        assertMsg
+          "test transfer factory administrator mismatch"
+          (arg.expectedAdmin == admin)
+        pure TransferFactoryView with admin; meta = emptyMetadata
+
+      transferFactory_transferImpl factoryCid arg = do
+        assertMsg
+          "test transfer factory administrator mismatch"
+          (arg.expectedAdmin == admin)
+        assertMsg
+          "test transfer instrument administrator mismatch"
+          (arg.transfer.instrumentId.admin == admin)
+        case mode of
+          TestTransferCompleted -> completeTestTransfer admin arg.transfer
+          TestTransferPending -> pure TransferInstructionResult with
+            output = TransferInstructionResult_Pending with
+              transferInstructionCid =
+                coerceInterfaceContractId factoryCid
+            senderChangeCids = []
+            meta = emptyMetadata
+          TestTransferFailed -> pure TransferInstructionResult with
+            output = TransferInstructionResult_Failed
+            senderChangeCids = []
+            meta = emptyMetadata
+
+
+createTestFactory
+  : Party
+  -> TestTransferMode
+  -> Script (ContractId TransferFactory)
+createTestFactory admin mode = do
+  factoryCid <- submit admin do createCmd TestTransferFactory with admin; mode
+  pure (toInterfaceContractId factoryCid)
+
+
+mintTestHolding
+  : Party
+  -> Party
+  -> InstrumentId
+  -> Decimal
+  -> Optional Lock
+  -> Script (ContractId Holding)
+mintTestHolding admin owner instrumentId amount lock = do
+  holdingCid <- submit admin do
+    createCmd TestHolding with
+      admin
+      owner
+      instrumentId
+      amount
+      lock
+  pure (toInterfaceContractId holdingCid)
+
+
+tokenExecutionFor
+  : Party
+  -> InstrumentId
+  -> ContractId TransferFactory
+  -> Script TokenExecution
+tokenExecutionFor owner instrumentId transferFactoryCid = do
+  holdings <- queryInterface @Holding owner
+  let inputHoldingCids =
+        [ holdingCid
+        | (holdingCid, Some holding) <- holdings
+        , holding.owner == owner
+        , holding.instrumentId == instrumentId
+        , holding.lock == None
+        ]
+  pure TokenExecution with
+    transferFactoryCid
+    inputHoldingCids
+    choiceContext = emptyChoiceContext
+
+
+testBalance : Party -> InstrumentId -> Script Decimal
+testBalance viewer instrumentId = do
+  holdings <- queryInterface @Holding viewer
+  pure (sum
+    [ holding.amount
+    | (_, Some holding) <- holdings
+    , holding.owner == viewer
+    , holding.instrumentId == instrumentId
+    ])
+
+
+assertTestBalance : Party -> InstrumentId -> Decimal -> Script ()
+assertTestBalance viewer instrumentId expected = do
+  actual <- testBalance viewer instrumentId
+  assertMsg
+    ("unexpected token balance: expected " <> show expected
+      <> ", got " <> show actual)
+    (actual == expected)
+
+
+queryHoldingDisclosures
+  : Party
+  -> [ContractId Holding]
+  -> Script [Disclosure]
+queryHoldingDisclosures owner holdingCids =
+  case holdingCids of
+    [] -> pure []
+    holdingCid :: remaining -> do
+      Some disclosure <- queryDisclosure @TestHolding
+        owner
+        (fromInterfaceContractId holdingCid)
+      remainingDisclosures <- queryHoldingDisclosures owner remaining
+      pure (disclosure :: remainingDisclosures)
+
+
+submitWithTokenDisclosures
+  : Party
+  -> Party
+  -> Party
+  -> TokenExecution
+  -> Commands a
+  -> Script a
+submitWithTokenDisclosures actor admin owner tokenExecution commands = do
+  Some factoryDisclosure <- queryDisclosure @TestTransferFactory
+    admin
+    (fromInterfaceContractId tokenExecution.transferFactoryCid)
+  holdingDisclosures <-
+    queryHoldingDisclosures owner tokenExecution.inputHoldingCids
+  submit
+    (actAs actor <> discloseMany (factoryDisclosure :: holdingDisclosures))
+    commands
+
+
+submitWithTokenDisclosuresMustFail
+  : Party
+  -> Party
+  -> Party
+  -> TokenExecution
+  -> Commands a
+  -> Script ()
+submitWithTokenDisclosuresMustFail
+    actor admin owner tokenExecution commands = do
+  Some factoryDisclosure <- queryDisclosure @TestTransferFactory
+    admin
+    (fromInterfaceContractId tokenExecution.transferFactoryCid)
+  holdingDisclosures <-
+    queryHoldingDisclosures owner tokenExecution.inputHoldingCids
+  submitMustFail
+    (actAs actor <> discloseMany (factoryDisclosure :: holdingDisclosures))
+    commands
