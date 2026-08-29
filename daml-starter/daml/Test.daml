@@ -100,3 +100,60 @@ testMandateGrantAndRevoke = script do
   None <- queryContractId agent mandateCid
   Some _ <- queryContractId agent usageCid
   pure ()
+
+
+testMandateChargeHappyPath : Script ()
+testMandateChargeHappyPath = script do
+  owner <- allocateParty "ChargeOwner"
+  agent <- allocateParty "ChargeAgent"
+  merchant <- allocateParty "ChargeMerchant"
+  admin <- allocateParty "ChargeTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (mandateCid, usage0Cid) <- submit agent do exerciseCmd proposalCid Accept
+
+  -- A normal under-cap charge advances usage and emits exactly one receipt.
+  (usage40Cid, receipt40Cid) <- submit agent do
+    exerciseCmd usage0Cid Charge with
+      merchant
+      amount = 40.0
+      reference = "order-40"
+  None <- queryContractId agent usage0Cid
+  Some usage40 <- queryContractId agent usage40Cid
+  Some receipt40 <- queryContractId merchant receipt40Cid
+  assert (usage40.spent == 40.0)
+  assert (receipt40.mandateCid == mandateCid)
+  assert (receipt40.owner == owner)
+  assert (receipt40.agent == agent)
+  assert (receipt40.merchant == merchant)
+  assert (receipt40.instrumentId == "Amulet")
+  assert (receipt40.amount == 40.0)
+  assert (receipt40.spentBefore == 0.0)
+  assert (receipt40.spentAfter == 40.0)
+  assert (receipt40.reference == "order-40")
+
+  -- Charging the exact remaining allowance is valid.
+  (usage100Cid, receipt100Cid) <- submit agent do
+    exerciseCmd usage40Cid Charge with
+      merchant
+      amount = 60.0
+      reference = "order-60"
+  None <- queryContractId agent usage40Cid
+  Some usage100 <- queryContractId agent usage100Cid
+  Some receipt100 <- queryContractId merchant receipt100Cid
+  assert (usage100.spent == 100.0)
+  assert (receipt100.spentBefore == 40.0)
+  assert (receipt100.spentAfter == 100.0)
+  receipts <- query @ChargeReceipt agent
+  assert (length receipts == 2)
+  pure ()

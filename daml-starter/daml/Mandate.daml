@@ -38,6 +38,43 @@ template MandateUsage
     signatory owner
     observer agent
 
+    -- The agent supplies only purchase-specific data. Every policy field is
+    -- fetched from the immutable mandate and every consequence commits in the
+    -- same transaction.
+    choice Charge : (ContractId MandateUsage, ContractId ChargeReceipt)
+      with
+        merchant : Party
+        amount : Decimal
+        reference : Text
+      controller agent
+      do
+        mandate <- fetch mandateCid
+        now <- getTime
+        let spentAfter = spent + amount
+
+        assertMsg "usage owner does not match mandate" (owner == mandate.owner)
+        assertMsg "usage agent does not match mandate" (agent == mandate.agent)
+        assertMsg "amount must be positive" (amount > 0.0)
+        assertMsg
+          "counterparty not allowed"
+          (merchant `elem` mandate.allowedCounterparties)
+        assertMsg "total cap exceeded" (spentAfter <= mandate.totalCap)
+        assertMsg "mandate expired" (now < mandate.expiresAt)
+
+        usageCid <- create this with spent = spentAfter
+        receiptCid <- create ChargeReceipt with
+          mandateCid
+          owner
+          agent
+          merchant
+          instrumentId = mandate.instrumentId
+          amount
+          spentBefore = spent
+          spentAfter
+          chargedAt = now
+          reference
+        pure (usageCid, receiptCid)
+
 
 -- Ledger evidence emitted only by a committed charge.
 template ChargeReceipt
