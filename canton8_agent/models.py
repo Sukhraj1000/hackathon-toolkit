@@ -45,6 +45,12 @@ class Receipt:
     merchant: str
     amount: Decimal
     business_reference: str
+    owner: str = ""
+    agent: str = ""
+    instrument_id: str = ""
+    spent_before: Decimal | None = None
+    spent_after: Decimal | None = None
+    charged_at: datetime | None = None
 
 
 @dataclass(frozen=True)

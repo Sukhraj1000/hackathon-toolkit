@@ -36,6 +36,8 @@ class LocalNetDemoResult:
     owner: str
     agent: str
     merchant: str
+    agent_user: str
+    resolver_user: str
     instrument_id: str
     amount: Decimal
     total_cap: Decimal
@@ -127,7 +129,13 @@ def _fund_owner(
                 provider, owner, str(amount), sub=c8lab.USER)
             break
         except c8lab.LabError as exc:
-            if ("LOCAL_VERDICT_LOCKED_CONTRACTS" not in str(exc)
+            contention_markers = (
+                "LOCAL_VERDICT_LOCKED_CONTRACTS",
+                "LOCAL_VERDICT_INACTIVE_CONTRACTS",
+                "CONTRACT_NOT_FOUND",
+                "INCONSISTENT",
+            )
+            if (not any(marker in str(exc) for marker in contention_markers)
                     or time.monotonic() >= deadline):
                 raise
             sleeper(2)
@@ -283,6 +291,8 @@ def run_localnet_demo(
         owner=owner,
         agent=agent,
         merchant=merchant,
+        agent_user=agent_user,
+        resolver_user=resolver_user,
         instrument_id=current.instrument_id,
         amount=amount,
         total_cap=current.total_cap,
