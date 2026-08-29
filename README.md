@@ -19,6 +19,7 @@ It runs against two targets:
 | `LOCALNET_TEAM_ACCESS.md` | Least-privilege shared LocalNet setup for the agent-wallet demo |
 | `c8lab.py` | The lab |
 | `daml-starter/` | Working Daml to copy from, including the mandate task |
+| `daml-starter-test/` | Test-only token implementation and Daml Script coverage |
 
 Start with `SETUP.md`, come back here.
 
@@ -138,6 +139,7 @@ Import it, do not just use the CLI.
 | `allocate_party(hint)` | Allocate, or reuse if it exists |
 | `grant_act_as(user, party)` | Fix a 403 |
 | `holdings(party)` | Balances, via the interface filter |
+| `holdings(party, include_disclosures=True)` | Resolver output for a transaction-scoped disclosed contract |
 | `submit(cmds, act_as, disclosed)` | Any command, with disclosed contracts |
 | `create_preapproval(me, provider)` | Step 3 |
 | `registry(path, body)` | Call the token registry |
