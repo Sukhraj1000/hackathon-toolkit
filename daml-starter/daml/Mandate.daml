@@ -1,77 +1,187 @@
--- Starter for the mandate task (D3 direct debit / D4 agent wallet).
---
--- One party lets another spend up to a cap, until a deadline, and can revoke
--- at any time. Same contract either way: for D3 the spender is a merchant,
--- for D4 it is an AI agent.
---
--- The point of the task: the cap is enforced HERE, in Daml. Not in your API.
--- A cap checked in Python is a suggestion. A cap in a choice body is a rule.
---
--- What to build on top:
---   * move real value: make Charge exercise a token transfer, not just record it
---   * an allow-list of counterparties the spender may pay
---   * per-period reset (harder than it looks, do the total cap first)
---   * an audit view of every charge
 module Mandate where
 
+import DA.Text qualified as Text
 
+
+maxMandateIdLength : Int
+maxMandateIdLength = 128
+
+
+maxBusinessReferenceLength : Int
+maxBusinessReferenceLength = 128
+
+
+isBoundedNonEmptyText : Int -> Text -> Bool
+isBoundedNonEmptyText maximumLength value =
+  Text.isNotEmpty (Text.trim value) && Text.length value <= maximumLength
+
+
+-- The immutable policy an owner grants to one designated agent.
 template Mandate
   with
-    owner    : Party      -- who is paying
-    spender  : Party      -- merchant, or agent
-    cap      : Decimal    -- total they may spend over the mandate's life
-    spent    : Decimal    -- how much so far
+    mandateId : Text
+    owner : Party
+    agent : Party
+    instrumentId : Text
+    expectedAdmin : Party
+    totalCap : Decimal
+    allowedCounterparties : [Party]
     expiresAt : Time
   where
-    ensure cap > 0.0 && spent >= 0.0 && spent <= cap
+    ensure
+      isBoundedNonEmptyText maxMandateIdLength mandateId
+        && totalCap > 0.0
 
-    -- Both must agree it exists. The owner cannot be signed up without
-    -- consenting, and the spender cannot be bound without consenting.
-    signatory owner, spender
+    signatory owner
+    observer agent
 
-    -- Spend within the mandate. No owner signature needed, that is the point.
-    choice Charge : ContractId Mandate
-      with amount : Decimal
-      controller spender
-      do
-        now <- getTime
-        -- Deadlines are NOT enforced for you. Check them yourself.
-        assertMsg "mandate expired" (now < expiresAt)
-        assertMsg "amount must be positive" (amount > 0.0)
-        assertMsg "charge would exceed the cap" (spent + amount <= cap)
-        create this with spent = spent + amount
-
-    -- The owner can always stop it, and the spender cannot block that.
+    -- Archiving the static policy invalidates every usage contract that
+    -- references it. No agent authorization is required.
     choice Revoke : ()
       controller owner
       do pure ()
 
-    -- Raising the cap needs both parties, because both are signatories.
-    choice Adjust : ContractId Mandate
-      with newCap : Decimal
-      controller owner, spender
+
+-- Owner and agent jointly authorize creation of the usage chain, so neither
+-- party can fabricate a replacement state alone. Consuming the current usage
+-- serializes charges against that chain.
+template MandateUsage
+  with
+    mandateCid : ContractId Mandate
+    mandateId : Text
+    owner : Party
+    agent : Party
+    spent : Decimal
+    processedReferences : [Text]
+  where
+    ensure
+      isBoundedNonEmptyText maxMandateIdLength mandateId
+        && spent >= 0.0
+
+    signatory owner, agent
+
+    -- The agent supplies only purchase-specific data. Every policy field is
+    -- fetched from the immutable mandate and every consequence commits in the
+    -- same transaction.
+    choice Charge : (ContractId MandateUsage, ContractId ChargeReceipt)
+      with
+        merchant : Party
+        amount : Decimal
+        businessReference : Text
+      controller agent
       do
-        assertMsg "new cap below what is already spent" (newCap >= spent)
-        create this with cap = newCap
+        mandate <- fetch mandateCid
+        now <- getTime
+        let spentAfter = spent + amount
+
+        assertMsg "usage owner does not match mandate" (owner == mandate.owner)
+        assertMsg "usage agent does not match mandate" (agent == mandate.agent)
+        assertMsg
+          "usage mandate id does not match mandate"
+          (mandateId == mandate.mandateId)
+        assertMsg "amount must be positive" (amount > 0.0)
+        assertMsg
+          "business reference must be non-empty and at most 128 symbols"
+          (isBoundedNonEmptyText
+            maxBusinessReferenceLength
+            businessReference)
+        assertMsg
+          "business reference already processed"
+          (businessReference `notElem` processedReferences)
+        assertMsg
+          "counterparty not allowed"
+          (merchant `elem` mandate.allowedCounterparties)
+        assertMsg "total cap exceeded" (spentAfter <= mandate.totalCap)
+        assertMsg "mandate expired" (now < mandate.expiresAt)
+
+        usageCid <- create this with
+          spent = spentAfter
+          processedReferences = businessReference :: processedReferences
+        receiptCid <- create ChargeReceipt with
+          mandateCid
+          mandateId
+          owner
+          agent
+          merchant
+          instrumentId = mandate.instrumentId
+          amount
+          spentBefore = spent
+          spentAfter
+          chargedAt = now
+          businessReference
+        pure (usageCid, receiptCid)
 
 
--- Propose and accept: the most common shape in Daml.
--- You cannot force a contract on someone who has to sign it, and you are
--- rarely online at the same time. So you offer, and they accept later.
+-- Requiring both authorities prevents either from fabricating a receipt alone.
+-- Replay protection lives in the consuming MandateUsage chain so it remains
+-- supported on Canton 3.x, where unique contract keys are unavailable.
+template ChargeReceipt
+  with
+    mandateCid : ContractId Mandate
+    mandateId : Text
+    owner : Party
+    agent : Party
+    merchant : Party
+    instrumentId : Text
+    amount : Decimal
+    spentBefore : Decimal
+    spentAfter : Decimal
+    chargedAt : Time
+    businessReference : Text
+  where
+    ensure
+      isBoundedNonEmptyText maxMandateIdLength mandateId
+        && isBoundedNonEmptyText
+          maxBusinessReferenceLength
+          businessReference
+        && amount > 0.0
+        && spentBefore >= 0.0
+        && spentAfter == spentBefore + amount
+
+    signatory owner, agent
+    observer merchant
+
+-- The owner proposes the complete immutable policy. The named agent accepts
+-- it once, atomically creating the policy and zero-spend usage state.
 template MandateProposal
   with
-    owner    : Party
-    spender  : Party
-    cap      : Decimal
+    mandateId : Text
+    owner : Party
+    agent : Party
+    instrumentId : Text
+    expectedAdmin : Party
+    totalCap : Decimal
+    allowedCounterparties : [Party]
     expiresAt : Time
   where
-    signatory owner
-    observer spender
+    ensure
+      isBoundedNonEmptyText maxMandateIdLength mandateId
+        && totalCap > 0.0
 
-    choice Accept : ContractId Mandate
-      controller spender
-      do create Mandate with owner; spender; cap; spent = 0.0; expiresAt
+    signatory owner
+    observer agent
+
+    choice Accept : (ContractId Mandate, ContractId MandateUsage)
+      controller agent
+      do
+        mandateCid <- create Mandate with
+          mandateId
+          owner
+          agent
+          instrumentId
+          expectedAdmin
+          totalCap
+          allowedCounterparties
+          expiresAt
+        usageCid <- create MandateUsage with
+          mandateCid
+          mandateId
+          owner
+          agent
+          spent = 0.0
+          processedReferences = []
+        pure (mandateCid, usageCid)
 
     choice Reject : ()
-      controller spender
+      controller agent
       do pure ()
