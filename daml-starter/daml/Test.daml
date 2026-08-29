@@ -15,6 +15,19 @@ assertUsageState viewer usageCid expectedSpent expectedReceiptCount = do
   assert (length receipts == expectedReceiptCount)
 
 
+assertAuthorizationState
+  : Party
+  -> ContractId Mandate
+  -> ContractId MandateUsage
+  -> Decimal
+  -> Int
+  -> Script ()
+assertAuthorizationState
+    viewer mandateCid usageCid expectedSpent expectedReceiptCount = do
+  Some _ <- queryContractId viewer mandateCid
+  assertUsageState viewer usageCid expectedSpent expectedReceiptCount
+
+
 testIou : Script ()
 testIou = script do
   bank <- allocateParty "Bank"
@@ -95,6 +108,7 @@ testMandateGrantAndRevoke = script do
   submitMustFail stranger do createCmd proposal
   proposalCid <- submit owner do createCmd proposal
   submitMustFail stranger do exerciseCmd proposalCid Accept
+  Some _ <- queryContractId agent proposalCid
 
   (mandateCid, usageCid) <- submit agent do exerciseCmd proposalCid Accept
   Some _ <- queryContractId owner mandateCid
@@ -104,6 +118,7 @@ testMandateGrantAndRevoke = script do
   -- The agent cannot revoke. The owner can revoke without the agent's
   -- signature, leaving usage as terminal audit state but no usable policy.
   submitMustFail agent do exerciseCmd mandateCid Revoke
+  Some _ <- queryContractId agent mandateCid
   submit owner do exerciseCmd mandateCid Revoke
   None <- queryContractId agent mandateCid
   Some _ <- queryContractId agent usageCid
@@ -116,6 +131,7 @@ testMandateChargeHappyPath = script do
   agent <- allocateParty "ChargeAgent"
   merchant <- allocateParty "ChargeMerchant"
   admin <- allocateParty "ChargeTokenAdmin"
+  stranger <- allocateParty "ChargeStranger"
   now <- getTime
   let deadline = addRelTime now (hours 24)
 
@@ -139,6 +155,9 @@ testMandateChargeHappyPath = script do
   None <- queryContractId agent usage0Cid
   Some usage40 <- queryContractId agent usage40Cid
   Some receipt40 <- queryContractId merchant receipt40Cid
+  Some _ <- queryContractId owner receipt40Cid
+  Some _ <- queryContractId agent receipt40Cid
+  None <- queryContractId stranger receipt40Cid
   assert (usage40.spent == 40.0)
   assert (receipt40.mandateCid == mandateCid)
   assert (receipt40.owner == owner)
@@ -148,6 +167,7 @@ testMandateChargeHappyPath = script do
   assert (receipt40.amount == 40.0)
   assert (receipt40.spentBefore == 0.0)
   assert (receipt40.spentAfter == 40.0)
+  assert (receipt40.chargedAt == now)
   assert (receipt40.reference == "order-40")
 
   -- Charging the exact remaining allowance is valid.
@@ -187,44 +207,141 @@ testMandateChargeRejections = script do
       totalCap = 100.0
       allowedCounterparties = [merchant]
       expiresAt = deadline
-  (_, usage0Cid) <- submit agent do exerciseCmd proposalCid Accept
+  (mandateCid, usage0Cid) <- submit agent do exerciseCmd proposalCid Accept
 
   -- Every forbidden command leaves the original usage and receipt set intact.
   submitMustFail agent do
     exerciseCmd usage0Cid Charge with
       merchant; amount = 0.0; reference = "zero"
-  assertUsageState agent usage0Cid 0.0 0
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
 
   submitMustFail agent do
     exerciseCmd usage0Cid Charge with
       merchant; amount = -1.0; reference = "negative"
-  assertUsageState agent usage0Cid 0.0 0
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
 
   submitMustFail agent do
     exerciseCmd usage0Cid Charge with
       merchant = blockedMerchant; amount = 10.0; reference = "blocked"
-  assertUsageState agent usage0Cid 0.0 0
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
 
   submitMustFail agent do
     exerciseCmd usage0Cid Charge with
       merchant; amount = 101.0; reference = "over-cap"
-  assertUsageState agent usage0Cid 0.0 0
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
 
   submitMustFail wrongAgent do
     exerciseCmd usage0Cid Charge with
       merchant; amount = 10.0; reference = "wrong-agent"
-  assertUsageState agent usage0Cid 0.0 0
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  submitMustFail owner do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 10.0; reference = "owner-is-not-agent"
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
 
   -- Once one command consumes the current usage, a command holding the stale
   -- contract ID cannot commit a second successor or receipt.
   (usage30Cid, _) <- submit agent do
     exerciseCmd usage0Cid Charge with
       merchant; amount = 30.0; reference = "winner"
-  assertUsageState agent usage30Cid 30.0 1
+  assertAuthorizationState agent mandateCid usage30Cid 30.0 1
+
+  -- The cap applies to cumulative spend, not only to each charge in isolation.
+  submitMustFail agent do
+    exerciseCmd usage30Cid Charge with
+      merchant; amount = 71.0; reference = "over-remaining"
+  assertAuthorizationState agent mandateCid usage30Cid 30.0 1
+
   submitMustFail agent do
     exerciseCmd usage0Cid Charge with
       merchant; amount = 10.0; reference = "stale"
-  assertUsageState agent usage30Cid 30.0 1
+  assertAuthorizationState agent mandateCid usage30Cid 30.0 1
+  pure ()
+
+
+testMandateInvalidCaps : Script ()
+testMandateInvalidCaps = script do
+  owner <- allocateParty "InvalidCapOwner"
+  agent <- allocateParty "InvalidCapAgent"
+  merchant <- allocateParty "InvalidCapMerchant"
+  admin <- allocateParty "InvalidCapTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+
+  submitMustFail owner do
+    createCmd MandateProposal with
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 0.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  submitMustFail owner do
+    createCmd MandateProposal with
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = -1.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  proposals <- query @MandateProposal owner
+  assert (null proposals)
+  pure ()
+
+
+testMandateUsageBinding : Script ()
+testMandateUsageBinding = script do
+  owner <- allocateParty "BindingOwner"
+  otherOwner <- allocateParty "BindingOtherOwner"
+  agent <- allocateParty "BindingAgent"
+  rogueAgent <- allocateParty "BindingRogueAgent"
+  merchant <- allocateParty "BindingMerchant"
+  admin <- allocateParty "BindingTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (mandateCid, legitimateUsageCid) <- submit agent do
+    exerciseCmd proposalCid Accept
+
+  -- Even an owner-created usage cannot delegate Charge to a different agent
+  -- than the immutable mandate names.
+  forgedAgentUsageCid <- submit owner do
+    createCmd MandateUsage with
+      mandateCid
+      owner
+      agent = rogueAgent
+      spent = 0.0
+  submitMustFail rogueAgent do
+    exerciseCmd forgedAgentUsageCid Charge with
+      merchant; amount = 10.0; reference = "forged-agent"
+  assertUsageState rogueAgent forgedAgentUsageCid 0.0 0
+
+  -- A usage signed by another owner cannot borrow an existing mandate.
+  forgedOwnerUsageCid <- submit otherOwner do
+    createCmd MandateUsage with
+      mandateCid
+      owner = otherOwner
+      agent
+      spent = 0.0
+  submitMustFail agent do
+    exerciseCmd forgedOwnerUsageCid Charge with
+      merchant; amount = 10.0; reference = "forged-owner"
+  assertAuthorizationState agent mandateCid forgedOwnerUsageCid 0.0 0
+
+  -- The legitimate authorization remains untouched by both attempts.
+  assertAuthorizationState agent mandateCid legitimateUsageCid 0.0 0
   pure ()
 
 

@@ -82,7 +82,10 @@ not advance usage.
 - under-cap and exact-cap charges;
 - zero, negative, over-cap, wrong-merchant, wrong-agent, expired, and revoked
   charges are rejected;
-- rejected and stale commands leave usage and receipt counts unchanged.
+- rejected and stale commands leave authorization, usage, and receipt state
+  unchanged;
+- forged usage contracts cannot substitute another owner or agent;
+- receipts expose complete audit data only to their stakeholders.
 
 Real Token Standard settlement is intentionally separate. The next integration
 step should perform the transfer inside `Charge`, in the same transaction as the
