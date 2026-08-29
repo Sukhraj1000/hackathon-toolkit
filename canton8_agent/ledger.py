@@ -50,7 +50,8 @@ def _submission_error(exc: c8lab.LabError) -> SubmissionError:
     )
     retryable_markers = (
         "LOCAL_VERDICT_LOCKED_CONTRACTS", "CONTRACT_NOT_FOUND",
-        "STALE", "ABORTED", "INCONSISTENT",
+        "LOCAL_VERDICT_INACTIVE_CONTRACTS", "STALE", "ABORTED",
+        "INCONSISTENT",
     )
     ambiguous = any(marker in message for marker in ambiguous_markers)
     retryable = ambiguous or any(marker in message for marker in retryable_markers)
@@ -111,26 +112,46 @@ class C8LedgerClient:
 
     def find_receipt(
             self, mandate_id: str, business_reference: str) -> Receipt | None:
-        matches = []
-        for event in _active_events(
-                self.agent_party, CHARGE_RECEIPT, self.agent_user):
-            argument = _create_argument(event)
-            if (argument.get("mandateId") == mandate_id
-                    and argument.get("businessReference") == business_reference):
-                matches.append((event, argument))
+        matches = [
+            receipt for receipt in self.list_receipts(mandate_id)
+            if receipt.business_reference == business_reference
+        ]
         if len(matches) > 1:
             raise AgentError(
                 "multiple receipts exist for one mandate/business reference")
-        if not matches:
-            return None
-        event, argument = matches[0]
-        return Receipt(
-            contract_id=event["contractId"],
-            mandate_id=argument["mandateId"],
-            merchant=argument["merchant"],
-            amount=Decimal(argument["amount"]),
-            business_reference=argument["businessReference"],
-        )
+        return matches[0] if matches else None
+
+    def list_receipts(self, mandate_id: str) -> list[Receipt]:
+        """Read the durable statement entries visible to the agent."""
+        receipts = []
+        for event in _active_events(
+                self.agent_party, CHARGE_RECEIPT, self.agent_user):
+            argument = _create_argument(event)
+            if argument.get("mandateId") != mandate_id:
+                continue
+            receipts.append(Receipt(
+                contract_id=event["contractId"],
+                mandate_id=argument["mandateId"],
+                merchant=argument["merchant"],
+                amount=Decimal(argument["amount"]),
+                business_reference=argument["businessReference"],
+                owner=argument.get("owner", ""),
+                agent=argument.get("agent", ""),
+                instrument_id=argument.get("instrumentId", ""),
+                spent_before=(Decimal(argument["spentBefore"])
+                              if argument.get("spentBefore") is not None
+                              else None),
+                spent_after=(Decimal(argument["spentAfter"])
+                             if argument.get("spentAfter") is not None
+                             else None),
+                charged_at=(_parse_time(argument["chargedAt"])
+                            if argument.get("chargedAt") else None)))
+        return sorted(
+            receipts,
+            key=lambda receipt: (
+                receipt.charged_at.timestamp()
+                if receipt.charged_at is not None else float("inf"),
+                receipt.business_reference))
 
     def submit_charge(
             self, authorization: Authorization, request: PurchaseRequest,

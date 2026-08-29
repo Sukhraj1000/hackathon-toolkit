@@ -305,6 +305,17 @@ class C8LedgerClientTests(unittest.TestCase):
         self.assertTrue(raised.exception.retryable)
         self.assertTrue(raised.exception.ambiguous)
 
+    def test_inactive_holding_failure_is_retryable(self):
+        client = C8LedgerClient("agent::1", "agent-user")
+        with mock.patch.object(
+                c8lab, "submit",
+                side_effect=c8lab.LabError(
+                    "LOCAL_VERDICT_INACTIVE_CONTRACTS")):
+            with self.assertRaises(SubmissionError) as raised:
+                client.submit_charge(
+                    authorization(), purchase(), resolution(), "command")
+        self.assertTrue(raised.exception.retryable)
+
     def test_authorization_adapter_reads_current_contract_field_names(self):
         usage_event = {"contractId": "usage-cid", "createArgument": {
             "mandateCid": "mandate-cid", "mandateId": "mandate-1",
@@ -335,6 +346,42 @@ class C8LedgerClientTests(unittest.TestCase):
         self.assertEqual(Decimal("100.0"), actual.total_cap)
         self.assertEqual(("merchant::1",), actual.allowed_counterparties)
         self.assertEqual(("old-order",), actual.processed_references)
+
+    def test_statement_receipts_are_complete_and_chronological(self):
+        events = [
+            {"contractId": "receipt-2", "createArgument": {
+                "mandateId": "mandate-1", "owner": "owner::1",
+                "agent": "agent::1", "merchant": "merchant::2",
+                "instrumentId": "Amulet", "amount": "2.0",
+                "spentBefore": "1.0", "spentAfter": "3.0",
+                "chargedAt": "2026-08-29T12:02:00Z",
+                "businessReference": "order-2"}},
+            {"contractId": "receipt-1", "createArgument": {
+                "mandateId": "mandate-1", "owner": "owner::1",
+                "agent": "agent::1", "merchant": "merchant::1",
+                "instrumentId": "Amulet", "amount": "1.0",
+                "spentBefore": "0.0", "spentAfter": "1.0",
+                "chargedAt": "2026-08-29T12:01:00Z",
+                "businessReference": "order-1"}},
+            {"contractId": "other", "createArgument": {
+                "mandateId": "different", "merchant": "merchant::1",
+                "amount": "9.0", "businessReference": "other"}},
+        ]
+        client = C8LedgerClient("agent::1", "agent-user")
+        with mock.patch.object(
+                ledger_module, "_active_events", return_value=events):
+            receipts = client.list_receipts("mandate-1")
+
+        self.assertEqual(["order-1", "order-2"], [
+            receipt.business_reference for receipt in receipts])
+        self.assertEqual("owner::1", receipts[0].owner)
+        self.assertEqual("agent::1", receipts[0].agent)
+        self.assertEqual("Amulet", receipts[0].instrument_id)
+        self.assertEqual(Decimal("0.0"), receipts[0].spent_before)
+        self.assertEqual(Decimal("1.0"), receipts[0].spent_after)
+        self.assertEqual(
+            datetime.datetime(2026, 8, 29, 12, 1, tzinfo=UTC),
+            receipts[0].charged_at)
 
 
 class C8TokenResolverTests(unittest.TestCase):

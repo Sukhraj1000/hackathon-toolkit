@@ -27,7 +27,9 @@ It runs against two targets:
 Start with `SETUP.md`, come back here.
 
 For the smallest working agent-wallet demo, start LocalNet and run
-`python3 agent_wallet_mvp.py`. See `MVP.md` for its prerequisites and scope.
+`python3 agent_wallet_mvp.py doctor`, followed by
+`python3 agent_wallet_mvp.py demo`. The same CLI provides `status`, `buy`, and
+`statement`; see `MVP.md` for its prerequisites and deliberately reduced scope.
 
 **Looking for the problems?** They are in [`CHALLENGES.md`](CHALLENGES.md).
 
