@@ -1,6 +1,10 @@
 # Daml starter
 
-Working code to copy from. Everything here builds and every test passes.
+This package contains a ledger-enforced spending mandate for one owner and one
+designated agent. The API is not the authorization boundary: cap, merchant,
+expiry, and revocation rules are checked by Daml.
+
+## Build and test
 
 ```bash
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21
@@ -10,77 +14,76 @@ daml build
 daml test
 ```
 
-```
-daml/Test.daml:testIou: ok, 1 active contracts, 4 transactions.
-daml/Test.daml:testMandate: ok, 0 active contracts, 10 transactions.
-```
+The tests run against the in-memory Daml Script ledger and require no Docker or
+external ledger.
 
-`daml test` runs in memory in about a second. No node, no Docker, no network.
-That is your development loop.
+## Contract flow
 
-## What is here
+```text
+MandateProposal                  owner offers a complete policy
+  -> Accept                      designated agent accepts
+      -> Mandate                 immutable authorization policy
+      -> MandateUsage            mutable state with spent = 0
 
-**`Iou.daml`** is the smallest useful contract. Read it first. It shows the five
-things that make up every Daml contract: `template`, `signatory`, `observer`,
-`choice`, `controller`, plus `ensure` for invariants.
+MandateUsage
+  -> Charge                      designated agent only
+      -> fetch Mandate           proves authorization remains active
+      -> MandateUsage            successor with exact cumulative spend
+      -> ChargeReceipt           immutable committed-charge evidence
 
-**`Mandate.daml`** is the starting point for the mandate task, which covers both
-the direct debit and the AI agent wallet framing. Same contract, different story.
-
-**`Test.daml`** shows how to prove your rules hold. `submitMustFail` is how you
-test security: it asserts that something is *rejected*.
-
-## The mandate
-
-One party lets another spend up to a cap, until a deadline, revocable at any
-time.
-
-```
-MandateProposal          owner offers
-   -> Accept             spender takes it up, creating a Mandate
 Mandate
-   -> Charge             spender spends, within the cap. No owner signature.
-   -> Adjust             change the cap. Needs BOTH signatures.
-   -> Revoke             owner stops it. Spender cannot block this.
+  -> Revoke                      owner only; archives the policy immediately
 ```
 
-The thing that matters, and the thing you will be asked about: **the cap is
-enforced in the contract, not in a backend.**
+`Mandate` pins the owner, agent, token instrument, expected token administrator,
+lifetime cap, merchant allow-list, and expiry. The owner is its signatory and
+the agent is an observer. Policy never changes after acceptance.
+
+`MandateUsage` is the single mutable state for that policy. `Charge` is a
+consuming choice controlled only by the designated agent. It fetches the static
+mandate, checks the requested purchase, then creates the usage successor and
+receipt in one transaction.
+
+## Ledger-enforced checks
+
+The security boundary is in `MandateUsage.Charge`:
 
 ```daml
-assertMsg "charge would exceed the cap" (spent + amount <= cap)
+mandate <- fetch mandateCid
+assertMsg "amount must be positive" (amount > 0.0)
+assertMsg "counterparty not allowed"
+  (merchant `elem` mandate.allowedCounterparties)
+assertMsg "total cap exceeded" (spentAfter <= mandate.totalCap)
+assertMsg "mandate expired" (now < mandate.expiresAt)
 ```
 
-A cap checked in your API is a suggestion, because anyone who can reach the
-ledger directly bypasses it. A cap in a choice body is a rule the network
-enforces.
+The agent supplies only `merchant`, `amount`, and a business reference. Owner,
+agent, instrument, administrator, cap, allow-list, and expiry come from ledger
+contracts rather than client input.
 
-## Where to take it
+Archiving `Mandate` revokes immediately. A remaining `MandateUsage` cannot be
+charged because the first action in `Charge` is fetching that archived mandate.
+Consuming usage also serializes charges: once one command commits, another
+command holding the old usage contract ID is stale and cannot commit.
 
-The starter records charges but does not move any money. That is the obvious
-next step.
+## Audit receipts
 
-- **Move real value.** Make `Charge` exercise a token standard transfer instead
-  of just incrementing `spent`. See `../README.md` for how transfers work and
-  `c8lab.py` for a working one.
-- **Allow-list.** Restrict which counterparties the spender may pay. A field
-  plus one `assertMsg`.
-- **Per-period caps.** "100 per month" rather than 100 in total. Harder than it
-  looks because of date arithmetic. Get the total cap working first.
-- **Audit trail.** Every charge as its own contract, so the owner can see what
-  the agent actually did and why it was allowed.
+Every successful charge creates one `ChargeReceipt` containing the mandate
+reference, owner, agent, merchant, instrument, amount, spend before and after,
+ledger time, and business reference. Rejected commands create no receipt and do
+not advance usage.
 
-## Three things that catch people
+## Test coverage
 
-**Choices are consuming by default.** Calling one archives the contract it was
-called on. That is why `Charge` returns a new `ContractId Mandate` instead of
-mutating anything. Contracts never change: you archive and create.
+`daml/Test.daml` proves:
 
-**Authority does not flow into nested exercises.** Inside a choice body you have
-the contract's signatories plus that choice's controllers. If you exercise a
-choice on another contract, that body gets its own set, not yours. Most
-authorization errors are this.
+- owner/agent signatory, observer, and controller boundaries;
+- grant acceptance and owner-only revocation;
+- under-cap and exact-cap charges;
+- zero, negative, over-cap, wrong-merchant, wrong-agent, expired, and revoked
+  charges are rejected;
+- rejected and stale commands leave usage and receipt counts unchanged.
 
-**Deadlines are not enforced for you.** `expiresAt` is just a field. If you do
-not write `assertMsg "expired" (now < expiresAt)` in the body, nothing checks it.
-A real audit finding on production Canton code was exactly this.
+Real Token Standard settlement is intentionally separate. The next integration
+step should perform the transfer inside `Charge`, in the same transaction as the
+usage successor and receipt.

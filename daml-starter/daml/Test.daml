@@ -7,6 +7,14 @@ import Iou
 import Mandate
 
 
+assertUsageState : Party -> ContractId MandateUsage -> Decimal -> Int -> Script ()
+assertUsageState viewer usageCid expectedSpent expectedReceiptCount = do
+  Some usage <- queryContractId viewer usageCid
+  assert (usage.spent == expectedSpent)
+  receipts <- query @ChargeReceipt viewer
+  assert (length receipts == expectedReceiptCount)
+
+
 testIou : Script ()
 testIou = script do
   bank <- allocateParty "Bank"
@@ -156,4 +164,123 @@ testMandateChargeHappyPath = script do
   assert (receipt100.spentAfter == 100.0)
   receipts <- query @ChargeReceipt agent
   assert (length receipts == 2)
+  pure ()
+
+
+testMandateChargeRejections : Script ()
+testMandateChargeRejections = script do
+  owner <- allocateParty "RejectOwner"
+  agent <- allocateParty "RejectAgent"
+  merchant <- allocateParty "AllowedMerchant"
+  blockedMerchant <- allocateParty "BlockedMerchant"
+  wrongAgent <- allocateParty "WrongAgent"
+  admin <- allocateParty "RejectTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (_, usage0Cid) <- submit agent do exerciseCmd proposalCid Accept
+
+  -- Every forbidden command leaves the original usage and receipt set intact.
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 0.0; reference = "zero"
+  assertUsageState agent usage0Cid 0.0 0
+
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = -1.0; reference = "negative"
+  assertUsageState agent usage0Cid 0.0 0
+
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant = blockedMerchant; amount = 10.0; reference = "blocked"
+  assertUsageState agent usage0Cid 0.0 0
+
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 101.0; reference = "over-cap"
+  assertUsageState agent usage0Cid 0.0 0
+
+  submitMustFail wrongAgent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 10.0; reference = "wrong-agent"
+  assertUsageState agent usage0Cid 0.0 0
+
+  -- Once one command consumes the current usage, a command holding the stale
+  -- contract ID cannot commit a second successor or receipt.
+  (usage30Cid, _) <- submit agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 30.0; reference = "winner"
+  assertUsageState agent usage30Cid 30.0 1
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 10.0; reference = "stale"
+  assertUsageState agent usage30Cid 30.0 1
+  pure ()
+
+
+testMandateExpiredCharge : Script ()
+testMandateExpiredCharge = script do
+  owner <- allocateParty "ExpiredOwner"
+  agent <- allocateParty "ExpiredAgent"
+  merchant <- allocateParty "ExpiredMerchant"
+  admin <- allocateParty "ExpiredTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 1)
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (_, usageCid) <- submit agent do exerciseCmd proposalCid Accept
+
+  -- Expiry is exclusive: a charge at expiresAt is rejected.
+  setTime deadline
+  submitMustFail agent do
+    exerciseCmd usageCid Charge with
+      merchant; amount = 10.0; reference = "expired"
+  assertUsageState agent usageCid 0.0 0
+  pure ()
+
+
+testMandatePostRevocationCharge : Script ()
+testMandatePostRevocationCharge = script do
+  owner <- allocateParty "RevokedOwner"
+  agent <- allocateParty "RevokedAgent"
+  merchant <- allocateParty "RevokedMerchant"
+  admin <- allocateParty "RevokedTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (mandateCid, usageCid) <- submit agent do exerciseCmd proposalCid Accept
+
+  submit owner do exerciseCmd mandateCid Revoke
+  None <- queryContractId agent mandateCid
+  submitMustFail agent do
+    exerciseCmd usageCid Charge with
+      merchant; amount = 10.0; reference = "after-revoke"
+  assertUsageState agent usageCid 0.0 0
   pure ()
