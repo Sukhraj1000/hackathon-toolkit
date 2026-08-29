@@ -17,6 +17,12 @@ template Mandate
     signatory owner
     observer agent
 
+    -- Archiving the static policy invalidates every usage contract that
+    -- references it. No agent authorization is required.
+    choice Revoke : ()
+      controller owner
+      do pure ()
+
 
 -- The single mutable state for a mandate. Consuming this contract serializes
 -- charges and prevents two commands from committing against the same balance.
@@ -54,3 +60,43 @@ template ChargeReceipt
 
     signatory owner
     observer agent, merchant
+
+
+-- The owner proposes the complete immutable policy. The named agent accepts
+-- it once, atomically creating the policy and its zero-spend usage state.
+template MandateProposal
+  with
+    owner : Party
+    agent : Party
+    instrumentId : Text
+    expectedAdmin : Party
+    totalCap : Decimal
+    allowedCounterparties : [Party]
+    expiresAt : Time
+  where
+    ensure totalCap > 0.0
+
+    signatory owner
+    observer agent
+
+    choice Accept : (ContractId Mandate, ContractId MandateUsage)
+      controller agent
+      do
+        mandateCid <- create Mandate with
+          owner
+          agent
+          instrumentId
+          expectedAdmin
+          totalCap
+          allowedCounterparties
+          expiresAt
+        usageCid <- create MandateUsage with
+          mandateCid
+          owner
+          agent
+          spent = 0.0
+        pure (mandateCid, usageCid)
+
+    choice Reject : ()
+      controller agent
+      do pure ()

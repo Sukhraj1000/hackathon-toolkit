@@ -62,3 +62,41 @@ testMandateModels = script do
   Some _ <- queryContractId owner usageCid
   Some _ <- queryContractId agent usageCid
   pure ()
+
+
+testMandateGrantAndRevoke : Script ()
+testMandateGrantAndRevoke = script do
+  owner <- allocateParty "GrantOwner"
+  agent <- allocateParty "GrantAgent"
+  merchant <- allocateParty "GrantMerchant"
+  admin <- allocateParty "GrantTokenAdmin"
+  stranger <- allocateParty "GrantStranger"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let proposal = MandateProposal with
+        owner
+        agent
+        instrumentId = "Amulet"
+        expectedAdmin = admin
+        totalCap = 100.0
+        allowedCounterparties = [merchant]
+        expiresAt = deadline
+
+  -- A party without owner authority cannot create a grant in the owner's
+  -- name, and only the designated agent can accept the pending grant.
+  submitMustFail stranger do createCmd proposal
+  proposalCid <- submit owner do createCmd proposal
+  submitMustFail stranger do exerciseCmd proposalCid Accept
+
+  (mandateCid, usageCid) <- submit agent do exerciseCmd proposalCid Accept
+  Some _ <- queryContractId owner mandateCid
+  Some usage <- queryContractId agent usageCid
+  assert (usage.spent == 0.0)
+
+  -- The agent cannot revoke. The owner can revoke without the agent's
+  -- signature, leaving usage as terminal audit state but no usable policy.
+  submitMustFail agent do exerciseCmd mandateCid Revoke
+  submit owner do exerciseCmd mandateCid Revoke
+  None <- queryContractId agent mandateCid
+  Some _ <- queryContractId agent usageCid
+  pure ()
