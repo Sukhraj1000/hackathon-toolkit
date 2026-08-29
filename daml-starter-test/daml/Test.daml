@@ -1,0 +1,742 @@
+-- Run with: daml test
+module Test where
+
+import DA.Time (addRelTime, hours)
+import DA.Text qualified as Text
+import Daml.Script
+import Iou
+import Mandate
+import Splice.Api.Token.HoldingV1 (InstrumentId(..))
+import Splice.Api.Token.MetadataV1 (emptyChoiceContext)
+import Splice.Api.Token.TransferInstructionV1 (TransferFactory)
+import TestToken
+
+
+testInstrument : Party -> InstrumentId
+testInstrument admin = InstrumentId with admin; id = "Amulet"
+
+
+setupTestSettlement
+  : Party
+  -> Party
+  -> Decimal
+  -> TestTransferMode
+  -> Script (ContractId TransferFactory, TokenExecution)
+setupTestSettlement admin owner balance mode = do
+  let instrumentId = testInstrument admin
+  factoryCid <- createTestFactory admin mode
+  _ <- mintTestHolding admin owner instrumentId balance None
+  tokenExecution <- tokenExecutionFor owner instrumentId factoryCid
+  pure (factoryCid, tokenExecution)
+
+
+assertUsageState : Party -> ContractId MandateUsage -> Decimal -> Int -> Script ()
+assertUsageState viewer usageCid expectedSpent expectedReceiptCount = do
+  Some usage <- queryContractId viewer usageCid
+  assert (usage.spent == expectedSpent)
+  assert (length usage.processedReferences == expectedReceiptCount)
+  receipts <- query @ChargeReceipt viewer
+  assert (length receipts == expectedReceiptCount)
+
+
+assertAuthorizationState
+  : Party
+  -> ContractId Mandate
+  -> ContractId MandateUsage
+  -> Decimal
+  -> Int
+  -> Script ()
+assertAuthorizationState
+    viewer mandateCid usageCid expectedSpent expectedReceiptCount = do
+  Some _ <- queryContractId viewer mandateCid
+  assertUsageState viewer usageCid expectedSpent expectedReceiptCount
+
+
+testIou : Script ()
+testIou = script do
+  bank <- allocateParty "Bank"
+  alice <- allocateParty "Alice"
+  bob <- allocateParty "Bob"
+
+  iou <- submit bank do
+    createCmd Iou with issuer = bank; owner = alice; amount = 100.0
+
+  submitMustFail bob do exerciseCmd iou Give with newOwner = bob
+  iou2 <- submit alice do exerciseCmd iou Give with newOwner = bob
+  submitMustFail bob do exerciseCmd iou2 Split with splitAmount = 150.0
+  pure ()
+
+
+testMandateModels : Script ()
+testMandateModels = script do
+  owner <- allocateParty "Owner"
+  agent <- allocateParty "Agent"
+  merchant <- allocateParty "Merchant"
+  admin <- allocateParty "TokenAdmin"
+  stranger <- allocateParty "Stranger"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let mandateId = "model-mandate"
+
+  mandateCid <- submit owner do
+    createCmd Mandate with
+      mandateId
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+
+  usageCid <- submit (actAs [owner, agent]) do
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
+
+  -- Neither owner nor agent can fabricate a replacement usage alone.
+  submitMustFail owner do
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
+  submitMustFail agent do
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
+  submitMustFail stranger do
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
+
+  -- Both owner and designated agent can see the authorization state.
+  Some _ <- queryContractId owner mandateCid
+  Some _ <- queryContractId agent mandateCid
+  Some _ <- queryContractId owner usageCid
+  Some _ <- queryContractId agent usageCid
+  pure ()
+
+
+testMandateGrantAndRevoke : Script ()
+testMandateGrantAndRevoke = script do
+  owner <- allocateParty "GrantOwner"
+  agent <- allocateParty "GrantAgent"
+  merchant <- allocateParty "GrantMerchant"
+  admin <- allocateParty "GrantTokenAdmin"
+  stranger <- allocateParty "GrantStranger"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let mandateId = "grant-mandate"
+  let proposal = MandateProposal with
+        mandateId
+        owner
+        agent
+        instrumentId = "Amulet"
+        expectedAdmin = admin
+        totalCap = 100.0
+        allowedCounterparties = [merchant]
+        expiresAt = deadline
+
+  -- A party without owner authority cannot create a grant in the owner's
+  -- name, and only the designated agent can accept the pending grant.
+  submitMustFail stranger do createCmd proposal
+  proposalCid <- submit owner do createCmd proposal
+  submitMustFail stranger do exerciseCmd proposalCid Accept
+  Some _ <- queryContractId agent proposalCid
+
+  (mandateCid, usageCid) <- submit agent do exerciseCmd proposalCid Accept
+  Some _ <- queryContractId owner mandateCid
+  Some usage <- queryContractId agent usageCid
+  assert (usage.spent == 0.0)
+  assert (usage.instrumentId == "Amulet")
+  assert (usage.expectedAdmin == admin)
+  assert (usage.totalCap == 100.0)
+  assert (usage.allowedCounterparties == [merchant])
+  assert (usage.expiresAt == deadline)
+
+  -- The agent cannot revoke. The owner can revoke without the agent's
+  -- signature, leaving usage as terminal audit state but no usable policy.
+  submitMustFail agent do exerciseCmd mandateCid Revoke
+  Some _ <- queryContractId agent mandateCid
+  submit owner do exerciseCmd mandateCid Revoke
+  None <- queryContractId agent mandateCid
+  Some _ <- queryContractId agent usageCid
+  pure ()
+
+
+testMandateChargeHappyPath : Script ()
+testMandateChargeHappyPath = script do
+  owner <- allocateParty "ChargeOwner"
+  agent <- allocateParty "ChargeAgent"
+  merchant <- allocateParty "ChargeMerchant"
+  admin <- allocateParty "ChargeTokenAdmin"
+  stranger <- allocateParty "ChargeStranger"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let mandateId = "happy-mandate"
+  let maximumBusinessReference =
+        Text.implode (replicate maxBusinessReferenceLength "x")
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      mandateId
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (mandateCid, usage0Cid) <- submit agent do exerciseCmd proposalCid Accept
+  (factoryCid, tokenExecution) <-
+    setupTestSettlement admin owner 100.0 TestTransferCompleted
+  assertTestBalance owner (testInstrument admin) 100.0
+  assertTestBalance merchant (testInstrument admin) 0.0
+
+  -- A receipt needs both mandate authorities, so neither can fabricate
+  -- evidence of a charge alone.
+  let forgedReceipt = ChargeReceipt with
+        mandateCid
+        mandateId
+        owner
+        agent
+        merchant
+        instrumentId = "Amulet"
+        amount = 1.0
+        spentBefore = 0.0
+        spentAfter = 1.0
+        chargedAt = now
+        businessReference = "forged-receipt"
+  submitMustFail owner do createCmd forgedReceipt
+  submitMustFail agent do createCmd forgedReceipt
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  -- A normal under-cap charge advances usage and emits exactly one receipt.
+  (usage40Cid, receipt40Cid) <-
+    submitWithTokenDisclosures agent admin owner tokenExecution do
+    exerciseCmd usage0Cid Charge with
+      merchant
+      amount = 40.0
+      businessReference = "order-40"
+      tokenExecution
+  None <- queryContractId agent usage0Cid
+  Some usage40 <- queryContractId agent usage40Cid
+  Some receipt40 <- queryContractId merchant receipt40Cid
+  Some _ <- queryContractId owner receipt40Cid
+  Some _ <- queryContractId agent receipt40Cid
+  None <- queryContractId stranger receipt40Cid
+  assert (usage40.spent == 40.0)
+  assert (usage40.processedReferences == ["order-40"])
+  assert (receipt40.mandateCid == mandateCid)
+  assert (receipt40.mandateId == mandateId)
+  assert (receipt40.owner == owner)
+  assert (receipt40.agent == agent)
+  assert (receipt40.merchant == merchant)
+  assert (receipt40.instrumentId == "Amulet")
+  assert (receipt40.amount == 40.0)
+  assert (receipt40.spentBefore == 0.0)
+  assert (receipt40.spentAfter == 40.0)
+  assert (receipt40.chargedAt == now)
+  assert (receipt40.businessReference == "order-40")
+  assertTestBalance owner (testInstrument admin) 60.0
+  assertTestBalance merchant (testInstrument admin) 40.0
+
+  -- Charging the exact remaining allowance is valid.
+  tokenExecution40 <- tokenExecutionFor owner (testInstrument admin) factoryCid
+  (usage100Cid, receipt100Cid) <-
+    submitWithTokenDisclosures agent admin owner tokenExecution40 do
+    exerciseCmd usage40Cid Charge with
+      merchant
+      amount = 60.0
+      businessReference = maximumBusinessReference
+      tokenExecution = tokenExecution40
+  None <- queryContractId agent usage40Cid
+  Some usage100 <- queryContractId agent usage100Cid
+  Some receipt100 <- queryContractId merchant receipt100Cid
+  assert (usage100.spent == 100.0)
+  assert
+    (usage100.processedReferences
+      == [maximumBusinessReference, "order-40"])
+  assert (receipt100.spentBefore == 40.0)
+  assert (receipt100.spentAfter == 100.0)
+  assert (receipt100.businessReference == maximumBusinessReference)
+  receipts <- query @ChargeReceipt agent
+  assert (length receipts == 2)
+  assertTestBalance owner (testInstrument admin) 0.0
+  assertTestBalance merchant (testInstrument admin) 100.0
+  pure ()
+
+
+testMandateTokenSettlementFailuresAreAtomic : Script ()
+testMandateTokenSettlementFailuresAreAtomic = script do
+  owner <- allocateParty "AtomicOwner"
+  agent <- allocateParty "AtomicAgent"
+  merchant <- allocateParty "AtomicMerchant"
+  admin <- allocateParty "AtomicTokenAdmin"
+  wrongAdmin <- allocateParty "AtomicWrongTokenAdmin"
+  otherOwner <- allocateParty "AtomicOtherOwner"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let instrumentId = testInstrument admin
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      mandateId = "atomic-settlement-mandate"
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 200.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (mandateCid, usageCid) <- submit agent do exerciseCmd proposalCid Accept
+
+  -- Pending and failed Token Standard outcomes abort the enclosing Charge.
+  -- The input holding, usage contract, and absence of receipts all survive.
+  (_, pendingExecution) <-
+    setupTestSettlement admin owner 100.0 TestTransferPending
+  submitWithTokenDisclosuresMustFail agent admin owner pendingExecution do
+    exerciseCmd usageCid Charge with
+      merchant
+      amount = 10.0
+      businessReference = "pending-token-transfer"
+      tokenExecution = pendingExecution
+  assertAuthorizationState agent mandateCid usageCid 0.0 0
+  assertTestBalance owner instrumentId 100.0
+  assertTestBalance merchant instrumentId 0.0
+
+  failedFactoryCid <- createTestFactory admin TestTransferFailed
+  failedExecution <- tokenExecutionFor owner instrumentId failedFactoryCid
+  submitWithTokenDisclosuresMustFail agent admin owner failedExecution do
+    exerciseCmd usageCid Charge with
+      merchant
+      amount = 10.0
+      businessReference = "failed-token-transfer"
+      tokenExecution = failedExecution
+  assertAuthorizationState agent mandateCid usageCid 0.0 0
+  assertTestBalance owner instrumentId 100.0
+  assertTestBalance merchant instrumentId 0.0
+
+  -- Coverage is checked before invoking the transfer factory.
+  completedFactoryCid <- createTestFactory admin TestTransferCompleted
+  insufficientExecution <- tokenExecutionFor owner instrumentId completedFactoryCid
+  submitWithTokenDisclosuresMustFail agent admin owner insufficientExecution do
+    exerciseCmd usageCid Charge with
+      merchant
+      amount = 101.0
+      businessReference = "insufficient-token-balance"
+      tokenExecution = insufficientExecution
+  assertAuthorizationState agent mandateCid usageCid 0.0 0
+  assertTestBalance owner instrumentId 100.0
+  assertTestBalance merchant instrumentId 0.0
+
+  -- A holding with a different instrument cannot be substituted even when
+  -- the owner and token administrator are otherwise correct.
+  wrongInstrumentHoldingCid <- mintTestHolding
+    admin
+    owner
+    (InstrumentId with admin; id = "OtherToken")
+    100.0
+    None
+  let wrongInstrumentExecution = TokenExecution with
+        transferFactoryCid = completedFactoryCid
+        inputHoldingCids = [wrongInstrumentHoldingCid]
+        choiceContext = emptyChoiceContext
+  submitWithTokenDisclosuresMustFail
+      agent admin owner wrongInstrumentExecution do
+    exerciseCmd usageCid Charge with
+      merchant
+      amount = 10.0
+      businessReference = "wrong-instrument"
+      tokenExecution = wrongInstrumentExecution
+  assertAuthorizationState agent mandateCid usageCid 0.0 0
+  assertTestBalance owner instrumentId 100.0
+  assertTestBalance merchant instrumentId 0.0
+
+  -- A disclosed holding owned by another party cannot fund this mandate.
+  wrongOwnerHoldingCid <- mintTestHolding
+    admin
+    otherOwner
+    instrumentId
+    100.0
+    None
+  let wrongOwnerExecution = TokenExecution with
+        transferFactoryCid = completedFactoryCid
+        inputHoldingCids = [wrongOwnerHoldingCid]
+        choiceContext = emptyChoiceContext
+  submitWithTokenDisclosuresMustFail
+      agent admin otherOwner wrongOwnerExecution do
+    exerciseCmd usageCid Charge with
+      merchant
+      amount = 10.0
+      businessReference = "wrong-holding-owner"
+      tokenExecution = wrongOwnerExecution
+  assertAuthorizationState agent mandateCid usageCid 0.0 0
+  assertTestBalance owner instrumentId 100.0
+  assertTestBalance merchant instrumentId 0.0
+
+  -- PublicFetch binds the registry-supplied factory CID to expectedAdmin.
+  wrongFactoryCid <- createTestFactory wrongAdmin TestTransferCompleted
+  let wrongFactoryExecution = insufficientExecution with
+        transferFactoryCid = wrongFactoryCid
+  submitWithTokenDisclosuresMustFail
+      agent wrongAdmin owner wrongFactoryExecution do
+    exerciseCmd usageCid Charge with
+      merchant
+      amount = 10.0
+      businessReference = "wrong-factory-admin"
+      tokenExecution = wrongFactoryExecution
+  assertAuthorizationState agent mandateCid usageCid 0.0 0
+  assertTestBalance owner instrumentId 100.0
+  assertTestBalance merchant instrumentId 0.0
+  pure ()
+
+
+testMandateChargeRejections : Script ()
+testMandateChargeRejections = script do
+  owner <- allocateParty "RejectOwner"
+  agent <- allocateParty "RejectAgent"
+  merchant <- allocateParty "AllowedMerchant"
+  blockedMerchant <- allocateParty "BlockedMerchant"
+  wrongAgent <- allocateParty "WrongAgent"
+  admin <- allocateParty "RejectTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let mandateId = "reject-mandate"
+  let tooLongBusinessReference =
+        Text.implode (replicate (maxBusinessReferenceLength + 1) "x")
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      mandateId
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (mandateCid, usage0Cid) <- submit agent do exerciseCmd proposalCid Accept
+  (_, tokenExecution) <-
+    setupTestSettlement admin owner 100.0 TestTransferCompleted
+
+  -- Every forbidden command leaves the original usage and receipt set intact.
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 10.0; businessReference = ""; tokenExecution
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 10.0; businessReference = "   "; tokenExecution
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 10.0
+      businessReference = tooLongBusinessReference
+      tokenExecution
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 0.0; businessReference = "zero"; tokenExecution
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = -1.0; businessReference = "negative"; tokenExecution
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant = blockedMerchant; amount = 10.0; businessReference = "blocked"
+      tokenExecution
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 101.0; businessReference = "over-cap"; tokenExecution
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  submitMustFail wrongAgent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 10.0; businessReference = "wrong-agent"; tokenExecution
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  submitMustFail owner do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 10.0; businessReference = "owner-is-not-agent"
+      tokenExecution
+  assertAuthorizationState agent mandateCid usage0Cid 0.0 0
+
+  -- Once one command consumes the current usage, a command holding the stale
+  -- contract ID cannot commit a second successor or receipt.
+  (usage30Cid, _) <-
+    submitWithTokenDisclosures agent admin owner tokenExecution do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 30.0; businessReference = "winner"; tokenExecution
+  assertAuthorizationState agent mandateCid usage30Cid 30.0 1
+
+  -- A reference remains consumed on the successor, preventing replay even
+  -- when a later command uses the current usage contract ID.
+  submitMustFail agent do
+    exerciseCmd usage30Cid Charge with
+      merchant; amount = 10.0; businessReference = "winner"; tokenExecution
+  assertAuthorizationState agent mandateCid usage30Cid 30.0 1
+
+  -- The cap applies to cumulative spend, not only to each charge in isolation.
+  submitMustFail agent do
+    exerciseCmd usage30Cid Charge with
+      merchant; amount = 71.0; businessReference = "over-remaining"
+      tokenExecution
+  assertAuthorizationState agent mandateCid usage30Cid 30.0 1
+
+  submitMustFail agent do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 10.0; businessReference = "stale"; tokenExecution
+  assertAuthorizationState agent mandateCid usage30Cid 30.0 1
+  pure ()
+
+
+testMandateInvalidPolicy : Script ()
+testMandateInvalidPolicy = script do
+  owner <- allocateParty "InvalidCapOwner"
+  agent <- allocateParty "InvalidCapAgent"
+  merchant <- allocateParty "InvalidCapMerchant"
+  admin <- allocateParty "InvalidCapTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let tooLongMandateId =
+        Text.implode (replicate (maxMandateIdLength + 1) "x")
+
+  submitMustFail owner do
+    createCmd MandateProposal with
+      mandateId = "   "
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  submitMustFail owner do
+    createCmd MandateProposal with
+      mandateId = tooLongMandateId
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+
+  submitMustFail owner do
+    createCmd MandateProposal with
+      mandateId = "invalid-cap-zero"
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 0.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  submitMustFail owner do
+    createCmd MandateProposal with
+      mandateId = "invalid-cap-negative"
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = -1.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  proposals <- query @MandateProposal owner
+  assert (null proposals)
+  pure ()
+
+
+testMandateUsageBinding : Script ()
+testMandateUsageBinding = script do
+  owner <- allocateParty "BindingOwner"
+  otherOwner <- allocateParty "BindingOtherOwner"
+  agent <- allocateParty "BindingAgent"
+  rogueAgent <- allocateParty "BindingRogueAgent"
+  merchant <- allocateParty "BindingMerchant"
+  admin <- allocateParty "BindingTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let mandateId = "binding-mandate"
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      mandateId
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (mandateCid, legitimateUsageCid) <- submit agent do
+    exerciseCmd proposalCid Accept
+  (_, tokenExecution) <-
+    setupTestSettlement admin owner 100.0 TestTransferCompleted
+
+  -- Neither stakeholder can create a second correctly bound usage alone.
+  submitMustFail owner do
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
+  submitMustFail agent do
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
+
+  -- A jointly signed usage still cannot borrow the mandate while changing
+  -- its stable owner-issued identifier.
+  forgedIdUsageCid <- submit (actAs [owner, agent]) do
+    createCmd (makeMandateUsage
+      mandateCid "different-mandate-id" owner agent "Amulet" admin 100.0
+      [merchant] deadline 0.0 [])
+  submitMustFail agent do
+    exerciseCmd forgedIdUsageCid Charge with
+      merchant; amount = 10.0; businessReference = "forged-id"; tokenExecution
+  assertAuthorizationState agent mandateCid forgedIdUsageCid 0.0 0
+
+  -- A usage authorized by a different agent cannot borrow this mandate.
+  forgedAgentUsageCid <- submit (actAs [owner, rogueAgent]) do
+    createCmd (makeMandateUsage
+      mandateCid "forged-agent-usage" owner rogueAgent "Amulet" admin 100.0
+      [merchant] deadline 0.0 [])
+  submitMustFail rogueAgent do
+    exerciseCmd forgedAgentUsageCid Charge with
+      merchant; amount = 10.0; businessReference = "forged-agent"
+      tokenExecution
+  assertUsageState rogueAgent forgedAgentUsageCid 0.0 0
+
+  -- A usage signed by another owner cannot borrow an existing mandate.
+  forgedOwnerUsageCid <- submit (actAs [otherOwner, agent]) do
+    createCmd (makeMandateUsage
+      mandateCid mandateId otherOwner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
+  submitMustFail agent do
+    exerciseCmd forgedOwnerUsageCid Charge with
+      merchant; amount = 10.0; businessReference = "forged-owner"
+      tokenExecution
+  assertAuthorizationState agent mandateCid forgedOwnerUsageCid 0.0 0
+
+  -- The legitimate authorization remains untouched by both attempts.
+  assertAuthorizationState agent mandateCid legitimateUsageCid 0.0 0
+  pure ()
+
+
+testMandateExpiredCharge : Script ()
+testMandateExpiredCharge = script do
+  owner <- allocateParty "ExpiredOwner"
+  agent <- allocateParty "ExpiredAgent"
+  merchant <- allocateParty "ExpiredMerchant"
+  admin <- allocateParty "ExpiredTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 1)
+  let mandateId = "expired-mandate"
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      mandateId
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (_, usageCid) <- submit agent do exerciseCmd proposalCid Accept
+  (_, tokenExecution) <-
+    setupTestSettlement admin owner 100.0 TestTransferCompleted
+
+  -- Expiry is exclusive: a charge at expiresAt is rejected.
+  setTime deadline
+  submitMustFail agent do
+    exerciseCmd usageCid Charge with
+      merchant; amount = 10.0; businessReference = "expired"; tokenExecution
+  assertUsageState agent usageCid 0.0 0
+  pure ()
+
+
+testMandatePostRevocationCharge : Script ()
+testMandatePostRevocationCharge = script do
+  owner <- allocateParty "RevokedOwner"
+  agent <- allocateParty "RevokedAgent"
+  merchant <- allocateParty "RevokedMerchant"
+  admin <- allocateParty "RevokedTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let mandateId = "revoked-mandate"
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      mandateId
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (mandateCid, usageCid) <- submit agent do exerciseCmd proposalCid Accept
+  (_, tokenExecution) <-
+    setupTestSettlement admin owner 100.0 TestTransferCompleted
+
+  submit owner do exerciseCmd mandateCid Revoke
+  None <- queryContractId agent mandateCid
+  submitMustFail agent do
+    exerciseCmd usageCid Charge with
+      merchant; amount = 10.0; businessReference = "after-revoke"
+      tokenExecution
+  assertUsageState agent usageCid 0.0 0
+  pure ()
+
+
+-- Canton serializes competing commands. Together with
+-- testMandatePostRevocationCharge, this covers both possible ledger orders:
+-- revoke first rejects the charge; charge first commits once, then revocation
+-- prevents every later charge.
+testMandateChargeThenRevoke : Script ()
+testMandateChargeThenRevoke = script do
+  owner <- allocateParty "ChargeThenRevokeOwner"
+  agent <- allocateParty "ChargeThenRevokeAgent"
+  merchant <- allocateParty "ChargeThenRevokeMerchant"
+  admin <- allocateParty "ChargeThenRevokeTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let mandateId = "charge-then-revoke-mandate"
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      mandateId
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (mandateCid, usage0Cid) <- submit agent do exerciseCmd proposalCid Accept
+  (_, tokenExecution) <-
+    setupTestSettlement admin owner 100.0 TestTransferCompleted
+
+  (usage10Cid, _) <-
+    submitWithTokenDisclosures agent admin owner tokenExecution do
+    exerciseCmd usage0Cid Charge with
+      merchant; amount = 10.0; businessReference = "before-revoke"
+      tokenExecution
+  assertAuthorizationState agent mandateCid usage10Cid 10.0 1
+
+  submit owner do exerciseCmd mandateCid Revoke
+  None <- queryContractId agent mandateCid
+  submitMustFail agent do
+    exerciseCmd usage10Cid Charge with
+      merchant; amount = 10.0; businessReference = "after-revoke"
+      tokenExecution
+  assertUsageState agent usage10Cid 10.0 1
+  pure ()

@@ -16,10 +16,27 @@ It runs against two targets:
 | `SETUP.md` | Install LocalNet, and the Daml toolchain if you need it |
 | `API.md` | Tested cheat sheet of the APIs you will use, and what needs a token |
 | `TROUBLESHOOTING.md` | Every error we actually hit, and the fix |
+| `LOCALNET_TEAM_ACCESS.md` | Least-privilege shared LocalNet setup for the agent-wallet demo |
+| `AGENT_WALLET.md` | Agent submitter, read-only resolver, reconciliation and safe retry design |
+| `MVP.md` | One-command LocalNet purchase demo and intentionally reduced scope |
+| `web/` | Next.js and TypeScript control surface for the MVP CLI |
 | `c8lab.py` | The lab |
+| `canton8_agent/` | Stdlib adapter for atomic `MandateUsage.Charge` execution |
 | `daml-starter/` | Working Daml to copy from, including the mandate task |
+| `daml-starter-test/` | Test-only token implementation and Daml Script coverage |
 
 Start with `SETUP.md`, come back here.
+
+For the working agent-wallet demo, start LocalNet and run
+`python3 agent_wallet_mvp.py doctor`, followed by
+`python3 agent_wallet_mvp.py demo`. The CLI also provides an autonomous
+`mission` command and a one-command adversarial/revocation `proof`, alongside
+`status`, `buy`, and `statement`; see `MVP.md` for the full demo path.
+
+To use the browser control surface, run `npm install` and `npm run dev` from
+`web/`, then open `http://127.0.0.1:3000`. The AI planner is optional: set
+`OPENAI_API_KEY` in the server environment to enable it, or leave it unset for
+the deterministic policy planner.
 
 **Looking for the problems?** They are in [`CHALLENGES.md`](CHALLENGES.md).
 
@@ -137,6 +154,7 @@ Import it, do not just use the CLI.
 | `allocate_party(hint)` | Allocate, or reuse if it exists |
 | `grant_act_as(user, party)` | Fix a 403 |
 | `holdings(party)` | Balances, via the interface filter |
+| `holdings(party, include_disclosures=True)` | Resolver output for a transaction-scoped disclosed contract |
 | `submit(cmds, act_as, disclosed)` | Any command, with disclosed contracts |
 | `create_preapproval(me, provider)` | Step 3 |
 | `registry(path, body)` | Call the token registry |
