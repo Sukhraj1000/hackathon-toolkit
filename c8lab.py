@@ -99,9 +99,13 @@ def _request(url, body=None, headers=None, method=None, timeout=30):
         data=json.dumps(body).encode() if body is not None else None,
         headers=headers or {})
     try:
-        raw = urllib.request.urlopen(req, timeout=timeout).read()
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read()
     except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")[:600]
+        try:
+            detail = e.read().decode(errors="replace")[:600]
+        finally:
+            e.close()
         raise LabError(f"HTTP {e.code} from {url}\n  {detail}")
     except urllib.error.URLError as e:
         raise LabError(f"cannot reach {url}: {e.reason}")
@@ -192,25 +196,42 @@ def allocate_party(hint, sub=ADMIN, grant_to=USER):
     return party
 
 
-def holdings(party, sub=USER):
+def holdings(party, sub=USER, include_disclosures=False):
     """Holding is an INTERFACE. TemplateFilter matches nothing and returns an
-    empty list with HTTP 200, which looks exactly like a zero balance."""
+    empty list with HTTP 200, which looks exactly like a zero balance.
+
+    A resolver can request disclosure material for an agent submission without
+    giving that agent read or act-as rights over the owner. Treat the returned
+    event blobs as transaction-scoped capabilities and do not log them.
+    """
     body = {"filter": {"filtersByParty": {party: {"cumulative": [
                 {"identifierFilter": {"InterfaceFilter": {"value": {
                     "interfaceId": HOLDING,
                     "includeInterfaceView": True,
-                    "includeCreatedEventBlob": False}}}}]}}},
+                    "includeCreatedEventBlob": include_disclosures}}}}]}}},
             "verbose": False, "activeAtOffset": ledger_end(sub)}
     out = []
     for item in call("/v2/state/active-contracts", body, sub=sub):
         ev = item.get("contractEntry", {}).get("JsActiveContract", {}).get("createdEvent", {})
         for iv in ev.get("interfaceViews", []):
             v = iv.get("viewValue", {})
-            out.append({"contractId": ev.get("contractId"),
-                        "amount": v.get("amount"),
-                        "instrument": v.get("instrumentId", {}).get("id"),
-                        "admin": v.get("instrumentId", {}).get("admin"),
-                        "locked": v.get("lock") is not None})
+            holding = {"contractId": ev.get("contractId"),
+                       "amount": v.get("amount"),
+                       "instrument": v.get("instrumentId", {}).get("id"),
+                       "admin": v.get("instrumentId", {}).get("admin"),
+                       "locked": v.get("lock") is not None}
+            if include_disclosures:
+                holding.update({
+                    "templateId": ev.get("templateId"),
+                    "createdEventBlob": ev.get("createdEventBlob"),
+                    "synchronizerId": ev.get("synchronizerId", ""),
+                })
+                if not all(holding.get(field) for field in
+                           ("templateId", "createdEventBlob")):
+                    raise LabError(
+                        "ledger omitted holding disclosure material; verify "
+                        "includeCreatedEventBlob support and resolver rights")
+            out.append(holding)
     return out
 
 

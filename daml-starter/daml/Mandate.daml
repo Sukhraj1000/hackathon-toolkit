@@ -1,6 +1,9 @@
 module Mandate where
 
 import DA.Text qualified as Text
+import Splice.Api.Token.HoldingV1
+import Splice.Api.Token.MetadataV1
+import Splice.Api.Token.TransferInstructionV1
 
 
 maxMandateIdLength : Int
@@ -14,6 +17,40 @@ maxBusinessReferenceLength = 128
 isBoundedNonEmptyText : Int -> Text -> Bool
 isBoundedNonEmptyText maximumLength value =
   Text.isNotEmpty (Text.trim value) && Text.length value <= maximumLength
+
+
+-- The registry supplies only opaque, ledger-derived execution context and
+-- owner holding references. Every material payment field is derived from the
+-- checked mandate and Charge arguments below.
+data TokenExecution = TokenExecution with
+    transferFactoryCid : ContractId TransferFactory
+    inputHoldingCids : [ContractId Holding]
+    choiceContext : ChoiceContext
+  deriving (Show, Eq)
+
+
+fetchCompatibleHoldings
+  : Party
+  -> InstrumentId
+  -> [ContractId Holding]
+  -> Update [HoldingView]
+fetchCompatibleHoldings expectedOwner expectedInstrument holdingCids =
+  case holdingCids of
+    [] -> pure []
+    holdingCid :: remainingCids -> do
+      holding <- fetch holdingCid
+      let holdingView = view holding
+      assertMsg
+        "holding owner does not match mandate owner"
+        (holdingView.owner == expectedOwner)
+      assertMsg
+        "holding instrument or administrator does not match mandate"
+        (holdingView.instrumentId == expectedInstrument)
+      assertMsg "holding amount must be positive" (holdingView.amount > 0.0)
+      assertMsg "locked holding is not spendable" (holdingView.lock == None)
+      remaining <-
+        fetchCompatibleHoldings expectedOwner expectedInstrument remainingCids
+      pure (holdingView :: remaining)
 
 
 -- The immutable policy an owner grants to one designated agent.
@@ -68,6 +105,7 @@ template MandateUsage
         merchant : Party
         amount : Decimal
         businessReference : Text
+        tokenExecution : TokenExecution
       controller agent
       do
         mandate <- fetch mandateCid
@@ -93,6 +131,62 @@ template MandateUsage
           (merchant `elem` mandate.allowedCounterparties)
         assertMsg "total cap exceeded" (spentAfter <= mandate.totalCap)
         assertMsg "mandate expired" (now < mandate.expiresAt)
+
+        let mandateInstrument = InstrumentId with
+              admin = mandate.expectedAdmin
+              id = mandate.instrumentId
+
+        assertMsg
+          "at least one owner holding is required"
+          (not (null tokenExecution.inputHoldingCids))
+        inputHoldings <- fetchCompatibleHoldings
+          mandate.owner
+          mandateInstrument
+          tokenExecution.inputHoldingCids
+        assertMsg
+          "owner holdings do not cover the charge amount"
+          (sum (map (\holding -> holding.amount) inputHoldings) >= amount)
+
+        -- PublicFetch binds an untrusted factory contract ID to the
+        -- administrator pinned by the mandate before it can be exercised.
+        factoryView <- exercise
+          tokenExecution.transferFactoryCid
+          TransferFactory_PublicFetch with
+            expectedAdmin = mandate.expectedAdmin
+            actor = mandate.owner
+        assertMsg
+          "transfer factory administrator does not match mandate"
+          (factoryView.admin == mandate.expectedAdmin)
+
+        let transfer = Transfer with
+              sender = mandate.owner
+              receiver = merchant
+              amount
+              instrumentId = mandateInstrument
+              requestedAt = now
+              executeBefore = mandate.expiresAt
+              inputHoldingCids = tokenExecution.inputHoldingCids
+              meta = emptyMetadata
+        transferResult <- exercise
+          tokenExecution.transferFactoryCid
+          TransferFactory_Transfer with
+            expectedAdmin = mandate.expectedAdmin
+            transfer
+            extraArgs = ExtraArgs with
+              context = tokenExecution.choiceContext
+              meta = emptyMetadata
+
+        receiverHoldingCids <- case transferResult.output of
+          TransferInstructionResult_Completed completedHoldingCids ->
+            pure completedHoldingCids
+          TransferInstructionResult_Pending _ ->
+            abort "token transfer did not complete immediately"
+          TransferInstructionResult_Failed ->
+            abort "token transfer failed"
+
+        assertMsg
+          "completed transfer returned no receiver holdings"
+          (not (null receiverHoldingCids))
 
         usageCid <- create this with
           spent = spentAfter
