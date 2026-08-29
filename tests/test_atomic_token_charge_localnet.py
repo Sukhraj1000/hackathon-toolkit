@@ -17,6 +17,9 @@ from unittest import mock
 import urllib.parse
 
 import c8lab
+from canton8_agent import (
+    C8LedgerClient, C8TokenResolver, MandateAgent, PurchaseRequest,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -354,24 +357,18 @@ class AtomicTokenChargeLocalNetTests(unittest.TestCase):
             merchant_before,
             _balance(merchant, instrument, admin, merchant_user))
 
-        token_execution = {
-            "transferFactoryCid": direct["factory"]["factoryId"],
-            "inputHoldingCids": direct["holdingCids"],
-            "choiceContext": direct["choiceContext"],
-        }
-        c8lab.submit(
-            [{"ExerciseCommand": {
-                "templateId": MANDATE_USAGE,
-                "contractId": usage_cid,
-                "choice": "Charge",
-                "choiceArgument": {
-                    "merchant": merchant,
-                    "amount": str(charge_amount),
-                    "businessReference": f"direct-{run_id}",
-                    "tokenExecution": token_execution,
-                }}}],
-            act_as=agent, sub=agent_user,
-            disclosed=direct["disclosures"], want_transaction=True)
+        wallet_agent = MandateAgent(
+            agent,
+            C8LedgerClient(agent, agent_user),
+            C8TokenResolver(resolver_user))
+        outcome = wallet_agent.charge(
+            proposal_args["mandateId"],
+            PurchaseRequest(
+                merchant=merchant,
+                amount=charge_amount,
+                business_reference=f"direct-{run_id}"))
+        self.assertEqual("committed", outcome.status)
+        self.assertIsNotNone(outcome.receipt)
 
         owner_after = _balance(owner, instrument, admin, resolver_user)
         merchant_after = _balance(

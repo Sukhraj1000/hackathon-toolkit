@@ -17,7 +17,9 @@ It runs against two targets:
 | `API.md` | Tested cheat sheet of the APIs you will use, and what needs a token |
 | `TROUBLESHOOTING.md` | Every error we actually hit, and the fix |
 | `LOCALNET_TEAM_ACCESS.md` | Least-privilege shared LocalNet setup for the agent-wallet demo |
+| `AGENT_WALLET.md` | Agent submitter, read-only resolver, reconciliation and safe retry design |
 | `c8lab.py` | The lab |
+| `canton8_agent/` | Stdlib adapter for atomic `MandateUsage.Charge` execution |
 | `daml-starter/` | Working Daml to copy from, including the mandate task |
 | `daml-starter-test/` | Test-only token implementation and Daml Script coverage |
 
