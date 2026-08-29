@@ -90,27 +90,23 @@ testMandateModels = script do
       expiresAt = deadline
 
   usageCid <- submit (actAs [owner, agent]) do
-    createCmd MandateUsage with
-      mandateCid
-      mandateId
-      owner
-      agent
-      spent = 0.0
-      processedReferences = []
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
 
   -- Neither owner nor agent can fabricate a replacement usage alone.
   submitMustFail owner do
-    createCmd MandateUsage with
-      mandateCid; mandateId; owner; agent; spent = 0.0
-      processedReferences = []
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
   submitMustFail agent do
-    createCmd MandateUsage with
-      mandateCid; mandateId; owner; agent; spent = 0.0
-      processedReferences = []
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
   submitMustFail stranger do
-    createCmd MandateUsage with
-      mandateCid; mandateId; owner; agent; spent = 0.0
-      processedReferences = []
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
 
   -- Both owner and designated agent can see the authorization state.
   Some _ <- queryContractId owner mandateCid
@@ -151,6 +147,11 @@ testMandateGrantAndRevoke = script do
   Some _ <- queryContractId owner mandateCid
   Some usage <- queryContractId agent usageCid
   assert (usage.spent == 0.0)
+  assert (usage.instrumentId == "Amulet")
+  assert (usage.expectedAdmin == admin)
+  assert (usage.totalCap == 100.0)
+  assert (usage.allowedCounterparties == [merchant])
+  assert (usage.expiresAt == deadline)
 
   -- The agent cannot revoke. The owner can revoke without the agent's
   -- signature, leaving usage as terminal audit state but no usable policy.
@@ -583,24 +584,20 @@ testMandateUsageBinding = script do
 
   -- Neither stakeholder can create a second correctly bound usage alone.
   submitMustFail owner do
-    createCmd MandateUsage with
-      mandateCid; mandateId; owner; agent; spent = 0.0
-      processedReferences = []
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
   submitMustFail agent do
-    createCmd MandateUsage with
-      mandateCid; mandateId; owner; agent; spent = 0.0
-      processedReferences = []
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
 
   -- A jointly signed usage still cannot borrow the mandate while changing
   -- its stable owner-issued identifier.
   forgedIdUsageCid <- submit (actAs [owner, agent]) do
-    createCmd MandateUsage with
-      mandateCid
-      mandateId = "different-mandate-id"
-      owner
-      agent
-      spent = 0.0
-      processedReferences = []
+    createCmd (makeMandateUsage
+      mandateCid "different-mandate-id" owner agent "Amulet" admin 100.0
+      [merchant] deadline 0.0 [])
   submitMustFail agent do
     exerciseCmd forgedIdUsageCid Charge with
       merchant; amount = 10.0; businessReference = "forged-id"; tokenExecution
@@ -608,13 +605,9 @@ testMandateUsageBinding = script do
 
   -- A usage authorized by a different agent cannot borrow this mandate.
   forgedAgentUsageCid <- submit (actAs [owner, rogueAgent]) do
-    createCmd MandateUsage with
-      mandateCid
-      mandateId = "forged-agent-usage"
-      owner
-      agent = rogueAgent
-      spent = 0.0
-      processedReferences = []
+    createCmd (makeMandateUsage
+      mandateCid "forged-agent-usage" owner rogueAgent "Amulet" admin 100.0
+      [merchant] deadline 0.0 [])
   submitMustFail rogueAgent do
     exerciseCmd forgedAgentUsageCid Charge with
       merchant; amount = 10.0; businessReference = "forged-agent"
@@ -623,13 +616,9 @@ testMandateUsageBinding = script do
 
   -- A usage signed by another owner cannot borrow an existing mandate.
   forgedOwnerUsageCid <- submit (actAs [otherOwner, agent]) do
-    createCmd MandateUsage with
-      mandateCid
-      mandateId
-      owner = otherOwner
-      agent
-      spent = 0.0
-      processedReferences = []
+    createCmd (makeMandateUsage
+      mandateCid mandateId otherOwner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
   submitMustFail agent do
     exerciseCmd forgedOwnerUsageCid Charge with
       merchant; amount = 10.0; businessReference = "forged-owner"

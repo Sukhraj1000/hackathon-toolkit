@@ -88,12 +88,20 @@ template MandateUsage
     mandateId : Text
     owner : Party
     agent : Party
+    instrumentId : Text
+    expectedAdmin : Party
+    totalCap : Decimal
+    allowedCounterparties : [Party]
+    expiresAt : Time
     spent : Decimal
     processedReferences : [Text]
   where
     ensure
       isBoundedNonEmptyText maxMandateIdLength mandateId
+        && Text.isNotEmpty (Text.trim instrumentId)
+        && totalCap > 0.0
         && spent >= 0.0
+        && spent <= totalCap
 
     signatory owner, agent
 
@@ -117,6 +125,21 @@ template MandateUsage
         assertMsg
           "usage mandate id does not match mandate"
           (mandateId == mandate.mandateId)
+        assertMsg
+          "usage instrument does not match mandate"
+          (instrumentId == mandate.instrumentId)
+        assertMsg
+          "usage token administrator does not match mandate"
+          (expectedAdmin == mandate.expectedAdmin)
+        assertMsg
+          "usage total cap does not match mandate"
+          (totalCap == mandate.totalCap)
+        assertMsg
+          "usage counterparty allow-list does not match mandate"
+          (allowedCounterparties == mandate.allowedCounterparties)
+        assertMsg
+          "usage expiry does not match mandate"
+          (expiresAt == mandate.expiresAt)
         assertMsg "amount must be positive" (amount > 0.0)
         assertMsg
           "business reference must be non-empty and at most 128 symbols"
@@ -206,6 +229,38 @@ template MandateUsage
         pure (usageCid, receiptCid)
 
 
+-- A typed constructor avoids ambiguous duplicate record labels for Daml Script
+-- clients while keeping the terminal policy snapshot explicit.
+makeMandateUsage
+  : ContractId Mandate
+  -> Text
+  -> Party
+  -> Party
+  -> Text
+  -> Party
+  -> Decimal
+  -> [Party]
+  -> Time
+  -> Decimal
+  -> [Text]
+  -> MandateUsage
+makeMandateUsage
+    mandateCid mandateId owner agent instrumentId expectedAdmin totalCap
+    allowedCounterparties expiresAt spent processedReferences =
+  MandateUsage with
+    mandateCid
+    mandateId
+    owner
+    agent
+    instrumentId
+    expectedAdmin
+    totalCap
+    allowedCounterparties
+    expiresAt
+    spent
+    processedReferences
+
+
 -- Requiring both authorities prevents either from fabricating a receipt alone.
 -- Replay protection lives in the consuming MandateUsage chain so it remains
 -- supported on Canton 3.x, where unique contract keys are unavailable.
@@ -272,6 +327,11 @@ template MandateProposal
           mandateId
           owner
           agent
+          instrumentId
+          expectedAdmin
+          totalCap
+          allowedCounterparties
+          expiresAt
           spent = 0.0
           processedReferences = []
         pure (mandateCid, usageCid)

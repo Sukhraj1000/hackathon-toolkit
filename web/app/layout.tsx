@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "C8 Agent Wallet",
-  description: "LocalNet control surface for policy-bound agent payments",
+  title: "D1 Spend-limited Agent Wallet",
+  description: "A LocalNet demo of a Canton wallet with Daml-enforced spending limits, revocation, and ledger receipts.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

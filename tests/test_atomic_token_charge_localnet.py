@@ -23,9 +23,9 @@ from canton8_agent import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MANDATE_PROPOSAL = "#daml-starter:Mandate:MandateProposal"
-MANDATE_USAGE = "#daml-starter:Mandate:MandateUsage"
-CHARGE_RECEIPT = "#daml-starter:Mandate:ChargeReceipt"
+MANDATE_PROPOSAL = "#c8-agent-wallet:Mandate:MandateProposal"
+MANDATE_USAGE = "#c8-agent-wallet:Mandate:MandateUsage"
+CHARGE_RECEIPT = "#c8-agent-wallet:Mandate:ChargeReceipt"
 
 
 def _right(kind, party):
@@ -116,7 +116,7 @@ def _upload_mandate_dar():
     subprocess.run(
         ["daml", "build"], cwd=package_dir, check=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    dar = package_dir / ".daml/dist/daml-starter-0.0.1.dar"
+    dar = package_dir / ".daml/dist/c8-agent-wallet-1.0.0.dar"
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as token_file:
         token_file.write(c8lab.token(c8lab.ADMIN))
         token_file.flush()

@@ -12,7 +12,9 @@ export const maxDuration = 180;
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(process.cwd(), "..");
 const cliPath = path.join(repoRoot, "agent_wallet_mvp.py");
-const actions = ["doctor", "demo", "status", "buy", "statement"] as const;
+const actions = [
+  "doctor", "demo", "status", "buy", "statement", "mission", "proof",
+] as const;
 const maximumBodyBytes = 2_048;
 
 let commandRunning = false;
@@ -23,6 +25,7 @@ type RequestBody = {
   amount?: unknown;
   cap?: unknown;
   reference?: unknown;
+  goal?: unknown;
 };
 
 const decimalPattern = /^(?:0|[1-9]\d*)(?:\.\d{1,10})?$/;
@@ -52,7 +55,9 @@ function exactKeys(body: RequestBody, allowed: string[]): void {
 
 function commandFor(body: RequestBody): string[] {
   if (!isAction(body.action)) {
-    throw new Error("action must be doctor, demo, status, buy, or statement");
+    throw new Error(
+      "action must be doctor, demo, status, buy, statement, mission, or proof",
+    );
   }
   switch (body.action) {
     case "doctor":
@@ -60,6 +65,9 @@ function commandFor(body: RequestBody): string[] {
     case "statement":
       exactKeys(body, ["action"]);
       return [body.action];
+    case "proof":
+      exactKeys(body, ["action"]);
+      return ["proof", "--json"];
     case "demo": {
       exactKeys(body, ["action", "amount", "cap"]);
       const amount = decimal(body.amount, "amount");
@@ -78,6 +86,17 @@ function commandFor(body: RequestBody): string[] {
         );
       }
       return ["buy", "--amount", amount, "--reference", body.reference];
+    }
+    case "mission": {
+      exactKeys(body, ["action", "goal"]);
+      if (typeof body.goal !== "string") {
+        throw new Error("goal must be text");
+      }
+      const goal = body.goal.trim();
+      if (!goal || goal.length > 500) {
+        throw new Error("goal must be between 1 and 500 characters");
+      }
+      return ["mission", "--goal", goal, "--json"];
     }
   }
 }
@@ -187,10 +206,15 @@ export async function POST(request: Request) {
       timeout: 170_000,
       maxBuffer: 2 * 1024 * 1024,
     });
+    const structured =
+      body.action === "mission" || body.action === "proof"
+        ? JSON.parse(stdout)
+        : undefined;
     return NextResponse.json({
       ok: true,
       action: body.action,
-      output: stdout.trim(),
+      output: structured ? undefined : stdout.trim(),
+      data: structured,
       warning: stderr.trim() || undefined,
       durationMs: Date.now() - started,
     });

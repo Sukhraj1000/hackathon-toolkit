@@ -58,6 +58,8 @@ class MandateAgent:
             request: PurchaseRequest) -> None:
         if authorization.agent != self.agent_party:
             raise AgentError("configured agent does not match mandate agent")
+        if authorization.revoked:
+            raise AgentError("mandate is revoked")
         if request.amount <= 0:
             raise AgentError("charge amount must be positive")
         reference = request.business_reference

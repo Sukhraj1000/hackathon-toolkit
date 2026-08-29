@@ -5,6 +5,11 @@ __pycache__/
 .DS_Store
 .env
 .c8wallet-state.json
+# Machine-specific operator copies. The reviewed, least-privilege examples
+# under deployment/ are the only network configuration shipped by this repo.
+/localnet-loopback.override.yaml
+/localnet-team-gateway.conf
+/tailscale-access-policy.json
 web/node_modules/
 web/.next/
 web/out/

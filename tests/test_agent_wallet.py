@@ -136,6 +136,14 @@ class MandateAgentTests(unittest.TestCase):
         self.assertEqual([], resolver.calls)
         self.assertEqual([], ledger.submit_calls)
 
+    def test_revoked_policy_rejection_never_calls_resolver_or_ledger_submit(self):
+        ledger = FakeLedger([authorization(revoked=True)])
+        resolver = FakeResolver()
+        with self.assertRaisesRegex(AgentError, "revoked"):
+            self.agent(ledger, resolver).charge("mandate-1", purchase())
+        self.assertEqual([], resolver.calls)
+        self.assertEqual([], ledger.submit_calls)
+
     def test_over_cap_purchase_is_rejected_before_resolution_or_submission(self):
         ledger = FakeLedger([authorization(
             total_cap=Decimal("20"), spent=Decimal("10"))])
@@ -346,18 +354,50 @@ class C8LedgerClientTests(unittest.TestCase):
         self.assertEqual(Decimal("100.0"), actual.total_cap)
         self.assertEqual(("merchant::1",), actual.allowed_counterparties)
         self.assertEqual(("old-order",), actual.processed_references)
+        self.assertFalse(actual.revoked)
+
+    def test_authorization_adapter_reads_terminal_snapshot_after_revocation(self):
+        usage_event = {"contractId": "usage-cid", "createArgument": {
+            "mandateCid": "mandate-cid", "mandateId": "mandate-1",
+            "owner": "owner::1", "agent": "agent::1",
+            "instrumentId": "Amulet", "expectedAdmin": "DSO::1",
+            "totalCap": "100.0",
+            "allowedCounterparties": ["merchant::1"],
+            "expiresAt": "2030-01-01T00:00:00Z", "spent": "10.0",
+            "processedReferences": ["old-order"],
+        }}
+
+        def active_events(party, template_id, user_id):
+            if template_id == ledger_module.MANDATE_USAGE:
+                return [usage_event]
+            if template_id == ledger_module.MANDATE:
+                return []
+            return []
+
+        with mock.patch.object(
+                ledger_module, "_active_events", side_effect=active_events):
+            actual = C8LedgerClient(
+                "agent::1", "agent-user").current_authorization("mandate-1")
+
+        self.assertTrue(actual.revoked)
+        self.assertEqual("mandate-cid", actual.mandate_cid)
+        self.assertEqual(Decimal("100.0"), actual.total_cap)
+        self.assertEqual(("merchant::1",), actual.allowed_counterparties)
+        self.assertEqual(Decimal("10.0"), actual.spent)
 
     def test_statement_receipts_are_complete_and_chronological(self):
         events = [
             {"contractId": "receipt-2", "createArgument": {
-                "mandateId": "mandate-1", "owner": "owner::1",
+                "mandateCid": "mandate-cid", "mandateId": "mandate-1",
+                "owner": "owner::1",
                 "agent": "agent::1", "merchant": "merchant::2",
                 "instrumentId": "Amulet", "amount": "2.0",
                 "spentBefore": "1.0", "spentAfter": "3.0",
                 "chargedAt": "2026-08-29T12:02:00Z",
                 "businessReference": "order-2"}},
             {"contractId": "receipt-1", "createArgument": {
-                "mandateId": "mandate-1", "owner": "owner::1",
+                "mandateCid": "mandate-cid", "mandateId": "mandate-1",
+                "owner": "owner::1",
                 "agent": "agent::1", "merchant": "merchant::1",
                 "instrumentId": "Amulet", "amount": "1.0",
                 "spentBefore": "0.0", "spentAfter": "1.0",
@@ -377,6 +417,7 @@ class C8LedgerClientTests(unittest.TestCase):
         self.assertEqual("owner::1", receipts[0].owner)
         self.assertEqual("agent::1", receipts[0].agent)
         self.assertEqual("Amulet", receipts[0].instrument_id)
+        self.assertEqual("mandate-cid", receipts[0].mandate_cid)
         self.assertEqual(Decimal("0.0"), receipts[0].spent_before)
         self.assertEqual(Decimal("1.0"), receipts[0].spent_after)
         self.assertEqual(

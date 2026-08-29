@@ -37,6 +37,7 @@ The adapter uses the deployed fields and choices directly:
 | `Mandate.expiresAt` | `Authorization.expires_at` |
 | `MandateUsage.spent` | `Authorization.spent` |
 | `MandateUsage.processedReferences` | `Authorization.processed_references` |
+| terminal `MandateUsage` policy snapshot | revoked `Authorization` and statement |
 | `MandateUsage.Charge` | `C8LedgerClient.submit_charge` |
 | `TokenExecution` | `ResolvedCharge` |
 
@@ -62,6 +63,12 @@ and after every failure, it searches for the matching `ChargeReceipt`.
 The stable business reference is the durable replay boundary. Generate it from
 the upstream order or invoice identity, persist it before submitting, and never
 replace it merely because a request timed out.
+
+After revocation, the archived `Mandate` is no longer usable, but the active
+terminal `MandateUsage` retains the immutable policy snapshot. The adapter marks
+that authorization `revoked`, rejects it for purchases, and can still render a
+fully ledger-derived statement. Every receipt also exposes its exact
+`mandateCid` authorization link.
 
 ## Example
 

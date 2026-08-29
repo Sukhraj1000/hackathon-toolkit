@@ -27,13 +27,16 @@ It runs against two targets:
 
 Start with `SETUP.md`, come back here.
 
-For the smallest working agent-wallet demo, start LocalNet and run
+For the working agent-wallet demo, start LocalNet and run
 `python3 agent_wallet_mvp.py doctor`, followed by
-`python3 agent_wallet_mvp.py demo`. The same CLI provides `status`, `buy`, and
-`statement`; see `MVP.md` for its prerequisites and deliberately reduced scope.
+`python3 agent_wallet_mvp.py demo`. The CLI also provides an autonomous
+`mission` command and a one-command adversarial/revocation `proof`, alongside
+`status`, `buy`, and `statement`; see `MVP.md` for the full demo path.
 
 To use the browser control surface, run `npm install` and `npm run dev` from
-`web/`, then open `http://127.0.0.1:3000`.
+`web/`, then open `http://127.0.0.1:3000`. The AI planner is optional: set
+`OPENAI_API_KEY` in the server environment to enable it, or leave it unset for
+the deterministic policy planner.
 
 **Looking for the problems?** They are in [`CHALLENGES.md`](CHALLENGES.md).
 

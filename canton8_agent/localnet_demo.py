@@ -20,14 +20,14 @@ import uuid
 
 import c8lab
 
-from .agent import MandateAgent
-from .errors import AgentError, ResolutionError
+from .agent import MandateAgent, command_id_for
+from .errors import ResolutionError, SubmissionError
 from .ledger import C8LedgerClient
 from .models import PurchaseRequest
 from .resolver import C8TokenResolver
 
 
-MANDATE_PROPOSAL = "#daml-starter:Mandate:MandateProposal"
+MANDATE_PROPOSAL = "#c8-agent-wallet:Mandate:MandateProposal"
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,9 @@ class LocalNetDemoResult:
     owner: str
     agent: str
     merchant: str
+    owner_user: str
     agent_user: str
+    merchant_user: str
     resolver_user: str
     instrument_id: str
     amount: Decimal
@@ -94,7 +96,7 @@ def _upload_mandate_dar(root: Path) -> None:
         subprocess.run(
             ["daml", "build"], cwd=package_dir, check=True,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        dar = package_dir / ".daml/dist/daml-starter-0.0.1.dar"
+        dar = package_dir / ".daml/dist/c8-agent-wallet-1.0.0.dar"
         with tempfile.NamedTemporaryFile(
                 mode="w", encoding="utf-8") as token_file:
             token_file.write(c8lab.token(c8lab.ADMIN))
@@ -222,7 +224,8 @@ def run_localnet_demo(
     c8lab.create_preapproval_proposal(owner, provider, sub=owner_user)
     c8lab.create_preapproval_proposal(merchant, provider, sub=merchant_user)
     _fund_owner(
-        provider, owner, max(total_cap, Decimal("1.0")), owner_user,
+        provider, owner, max(total_cap + Decimal("0.01"), Decimal("1.0")),
+        owner_user,
         deadline_seconds, sleeper)
 
     instrument_id = "Amulet"
@@ -279,19 +282,30 @@ def run_localnet_demo(
         merchant=merchant,
         amount=remaining + Decimal("0.01"),
         business_reference=f"mvp-over-cap-{run_id}")
+    over_cap_resolution = resolver.resolve(current, over_cap_request)
+    if over_cap_resolution.transfer_kind != "direct":
+        raise c8lab.LabError(
+            "over-cap proof could not obtain direct transfer context")
     try:
-        wallet.charge(mandate_id, over_cap_request)
-    except AgentError as exc:
+        # Deliberately bypass MandateAgent's local checks. The direct ledger
+        # submission must be rejected by MandateUsage.Charge itself.
+        ledger.submit_charge(
+            current, over_cap_request, over_cap_resolution,
+            command_id_for(mandate_id, over_cap_request.business_reference))
+    except SubmissionError as exc:
         over_cap_error = str(exc)
     else:
-        raise c8lab.LabError("the over-cap safety check unexpectedly succeeded")
+        raise c8lab.LabError(
+            "the direct on-ledger over-cap proof unexpectedly succeeded")
 
     return LocalNetDemoResult(
         mandate_id=mandate_id,
         owner=owner,
         agent=agent,
         merchant=merchant,
+        owner_user=owner_user,
         agent_user=agent_user,
+        merchant_user=merchant_user,
         resolver_user=resolver_user,
         instrument_id=current.instrument_id,
         amount=amount,

@@ -1,8 +1,9 @@
 # Daml starter
 
-This package contains a ledger-enforced spending mandate for one owner and one
-designated agent. The API is not the authorization boundary: cap, merchant,
-expiry, and revocation rules are checked by Daml.
+This directory builds the submission package `c8-agent-wallet` version `1.0.0`.
+It contains a ledger-enforced spending mandate for one owner and one designated
+agent. The API is not the authorization boundary: cap, merchant, expiry, and
+revocation rules are checked by Daml.
 
 ## Build and test
 
@@ -27,7 +28,7 @@ so the mock factory and holding cannot be uploaded with the mandate DAR.
 MandateProposal                  owner offers a complete policy
   -> Accept                      designated agent accepts
       -> Mandate                 immutable authorization policy
-      -> MandateUsage            jointly signed state; spent/references empty
+      -> MandateUsage            jointly signed policy snapshot and spend state
 
 MandateUsage
   -> Charge                      designated agent only
@@ -49,7 +50,8 @@ never changes after acceptance.
 `MandateUsage` is jointly signed by the owner and designated agent, so neither
 party can fabricate a replacement state alone. `Charge` is a consuming choice
 controlled only by the designated agent. It fetches the static mandate, checks
-the requested purchase, then creates the usage successor and receipt in one
+that its retained policy snapshot still exactly matches, checks the requested
+purchase, then creates the usage successor and receipt in one
 transaction. Token movement is not a later API side effect: a completed direct
 `TransferFactory_Transfer`, the usage successor, and the receipt all commit in
 the same transaction. A pending or failed transfer aborts the whole charge.
@@ -88,6 +90,10 @@ is rejected.
 
 Archiving `Mandate` revokes immediately. A remaining `MandateUsage` cannot be
 charged because the first action in `Charge` is fetching that archived mandate.
+The usage contract deliberately retains the immutable instrument, administrator,
+cap, counterparty allow-list, and expiry so a ledger-derived human statement
+remains complete after revocation; it is terminal audit state, not usable
+authorization.
 Consuming usage also serializes charges: once one command commits, another
 command holding the old usage contract ID is stale and cannot commit. Every
 successor carries all processed business references, so a reference cannot be

@@ -20,6 +20,7 @@ class Authorization:
     expires_at: datetime
     spent: Decimal
     processed_references: tuple[str, ...]
+    revoked: bool = False
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class Receipt:
     spent_before: Decimal | None = None
     spent_after: Decimal | None = None
     charged_at: datetime | None = None
+    mandate_cid: str = ""
 
 
 @dataclass(frozen=True)

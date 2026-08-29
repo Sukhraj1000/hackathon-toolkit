@@ -10,9 +10,9 @@ from .errors import AgentError, SubmissionError
 from .models import Authorization, PurchaseRequest, Receipt, ResolvedCharge
 
 
-MANDATE = "#daml-starter:Mandate:Mandate"
-MANDATE_USAGE = "#daml-starter:Mandate:MandateUsage"
-CHARGE_RECEIPT = "#daml-starter:Mandate:ChargeReceipt"
+MANDATE = "#c8-agent-wallet:Mandate:Mandate"
+MANDATE_USAGE = "#c8-agent-wallet:Mandate:MandateUsage"
+CHARGE_RECEIPT = "#c8-agent-wallet:Mandate:ChargeReceipt"
 
 
 def _parse_time(value: str) -> datetime:
@@ -83,10 +83,25 @@ class C8LedgerClient:
                 self.agent_party, MANDATE, self.agent_user):
             if event.get("contractId") == usage.get("mandateCid"):
                 mandates.append((event, _create_argument(event)))
-        if len(mandates) != 1:
+        if len(mandates) > 1:
             raise AgentError(
-                f"active mandate for {mandate_id!r} was not found uniquely")
-        mandate_event, mandate = mandates[0]
+                f"multiple active mandates found for {mandate_id!r}")
+
+        revoked = not mandates
+        if revoked:
+            required_snapshot_fields = {
+                "instrumentId", "expectedAdmin", "totalCap",
+                "allowedCounterparties", "expiresAt",
+            }
+            missing = sorted(required_snapshot_fields - set(usage))
+            if missing:
+                raise AgentError(
+                    f"revoked mandate {mandate_id!r} predates durable policy "
+                    "snapshots; missing " + ", ".join(missing))
+            mandate_event = {"contractId": usage["mandateCid"]}
+            mandate = usage
+        else:
+            mandate_event, mandate = mandates[0]
 
         if (usage.get("owner") != mandate.get("owner")
                 or usage.get("agent") != mandate.get("agent")
@@ -94,6 +109,20 @@ class C8LedgerClient:
             raise AgentError("usage fields do not match the referenced mandate")
         if mandate.get("agent") != self.agent_party:
             raise AgentError("configured agent does not match the mandate")
+
+        # New usage contracts retain the immutable policy so the ledger-derived
+        # statement remains readable after owner revocation. While the mandate
+        # is active, reject any snapshot that does not match it.
+        snapshot_fields = (
+            "instrumentId", "expectedAdmin", "totalCap",
+            "allowedCounterparties", "expiresAt",
+        )
+        if not revoked:
+            for field in snapshot_fields:
+                if field in usage and usage[field] != mandate.get(field):
+                    raise AgentError(
+                        f"usage policy snapshot field {field!r} does not "
+                        "match the referenced mandate")
 
         return Authorization(
             mandate_cid=mandate_event["contractId"],
@@ -108,6 +137,7 @@ class C8LedgerClient:
             expires_at=_parse_time(mandate["expiresAt"]),
             spent=Decimal(usage["spent"]),
             processed_references=tuple(usage["processedReferences"]),
+            revoked=revoked,
         )
 
     def find_receipt(
@@ -132,6 +162,7 @@ class C8LedgerClient:
             receipts.append(Receipt(
                 contract_id=event["contractId"],
                 mandate_id=argument["mandateId"],
+                mandate_cid=argument.get("mandateCid", ""),
                 merchant=argument["merchant"],
                 amount=Decimal(argument["amount"]),
                 business_reference=argument["businessReference"],
