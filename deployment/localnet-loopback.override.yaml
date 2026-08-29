@@ -1,0 +1,45 @@
+# Compose this after Splice LocalNet's compose.yaml. Every published service
+# stays on loopback; authenticated tailnet access is added separately with
+# Tailscale Serve. Requires Docker Compose with support for !override.
+services:
+  postgres:
+    ports: !override
+      - "127.0.0.1:5432:5432"
+
+  canton:
+    ports: !override
+      - "127.0.0.1:2901:2901"
+      - "127.0.0.1:2902:2902"
+      - "127.0.0.1:2975:2975"
+      - "127.0.0.1:3901:3901"
+      - "127.0.0.1:3902:3902"
+      - "127.0.0.1:3975:3975"
+      - "127.0.0.1:4901:4901"
+      - "127.0.0.1:4902:4902"
+      - "127.0.0.1:4975:4975"
+
+  splice:
+    ports: !override
+      - "127.0.0.1:2903:2903"
+      - "127.0.0.1:3903:3903"
+      - "127.0.0.1:4903:4903"
+
+  nginx:
+    ports: !override
+      - "127.0.0.1:${APP_USER_UI_PORT}:${APP_USER_UI_PORT}"
+      - "127.0.0.1:${APP_PROVIDER_UI_PORT}:${APP_PROVIDER_UI_PORT}"
+      - "127.0.0.1:${SV_UI_PORT}:${SV_UI_PORT}"
+
+  team-gateway:
+    image: "nginx:1.27.0"
+    restart: unless-stopped
+    depends_on:
+      nginx:
+        condition: service_started
+    volumes:
+      - type: bind
+        source: "${LOCALNET_TEAM_GATEWAY_CONFIG:?set an absolute path to localnet-team-gateway.conf}"
+        target: /etc/nginx/nginx.conf
+        read_only: true
+    ports:
+      - "127.0.0.1:8401:8401"
