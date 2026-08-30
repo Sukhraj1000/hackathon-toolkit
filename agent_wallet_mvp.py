@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Command-line interface for the reduced LocalNet agent-wallet MVP."""
 
+from __future__ import annotations
+
 import argparse
 from dataclasses import asdict, dataclass
 import datetime
@@ -392,12 +394,31 @@ def run_doctor() -> int:
         failures.append("Daml CLI not found; install it using SETUP.md")
     else:
         try:
-            version = subprocess.run(
+            version_output = subprocess.run(
                 [daml, "version"], check=True, capture_output=True,
-                text=True, timeout=20).stdout.splitlines()[0]
+                text=True, timeout=20).stdout.splitlines()
+            version = next(
+                (line.strip() for line in version_output
+                 if line.strip() and line.strip()[0].isdigit()),
+                version_output[0].strip() if version_output else "version unknown")
             checks.append(f"Daml CLI         {_safe_text(version)}")
         except (OSError, subprocess.SubprocessError) as exc:
             failures.append(f"Daml CLI failed: {_safe_text(exc)}")
+
+    java = shutil.which("java")
+    if not java:
+        failures.append("Java runtime not found; install OpenJDK 21 using SETUP.md")
+    else:
+        try:
+            java_result = subprocess.run(
+                [java, "-version"], check=True, capture_output=True,
+                text=True, timeout=20)
+            java_output = (java_result.stderr or java_result.stdout).splitlines()
+            java_version = java_output[0].strip() if java_output else "version unknown"
+            checks.append(f"Java runtime     {_safe_text(java_version)}")
+        except (OSError, subprocess.SubprocessError) as exc:
+            detail = getattr(exc, "stderr", "") or str(exc)
+            failures.append(f"Java runtime failed: {_safe_text(detail)}")
 
     try:
         checks.append(f"ledger offset    {c8lab.ledger_end(c8lab.ADMIN)}")

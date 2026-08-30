@@ -349,6 +349,32 @@ class MvpCommandTests(unittest.TestCase):
         self.assertTrue(payload["revoked"])
         self.assertEqual("rejected", payload["steps"][0]["status"])
 
+    def test_doctor_rejects_an_unusable_java_runtime(self):
+        daml_result = mock.Mock(
+            stdout="SDK versions:\n  3.4.10  (default SDK version for new projects)\n",
+            stderr="",
+        )
+        java_error = agent_wallet_mvp.subprocess.CalledProcessError(
+            1, ["/fake/java", "-version"], stderr="Unable to locate a Java Runtime")
+        stdout = io.StringIO()
+        with mock.patch.object(agent_wallet_mvp.c8lab, "IDP", ""), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "ACCESS_TOKEN", ""), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY", "http://localhost:4000"), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "ledger_end", return_value=42), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "admin_party", return_value="admin::1"), \
+             mock.patch.object(
+                 agent_wallet_mvp.shutil, "which",
+                 side_effect=lambda name: f"/fake/{name}"), \
+             mock.patch.object(
+                 agent_wallet_mvp.subprocess, "run",
+                 side_effect=[daml_result, java_error]), \
+             mock.patch("sys.stdout", stdout):
+            status = agent_wallet_mvp.run_doctor()
+
+        self.assertEqual(1, status)
+        self.assertIn("Daml CLI         3.4.10", stdout.getvalue())
+        self.assertIn("Java runtime failed", stdout.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

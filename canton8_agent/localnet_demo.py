@@ -6,6 +6,8 @@ credentials to disk. The reusable wallet and resolver behavior remains in the
 small modules next to this one.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 import datetime
 from decimal import Decimal

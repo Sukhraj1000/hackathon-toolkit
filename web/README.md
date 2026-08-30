@@ -13,10 +13,13 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:3000`. LocalNet and the Daml CLI must already be
-available. Use **Run doctor**, **Create & run demo**, then **Run autonomous
-mission**. The status, mission, manual purchase, and statement controls reuse
-the ignored `.c8wallet-state.json` in the repository root. Proof Mode creates
-and revokes its own disposable wallet.
+available. Run **Check environment** first; ledger actions stay disabled until
+the Daml CLI, Java runtime, ledger and registry are reachable. Then follow the
+three numbered steps: **Create wallet and purchase**, **Run agent purchase** and
+**Run boundary tests**. The status, mission, manual purchase, and statement
+controls reuse the ignored `.c8wallet-state.json` in the repository root. Proof
+Mode creates and revokes its own disposable wallet. The UI never substitutes a
+simulated success when LocalNet is unavailable.
 
 The mission uses the deterministic safe planner by default. To enable the
 optional OpenAI ranking step, start the server with `OPENAI_API_KEY` set. You

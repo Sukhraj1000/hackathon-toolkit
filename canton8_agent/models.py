@@ -1,5 +1,7 @@
 """Domain values shared by the agent, ledger adapter, and token resolver."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal

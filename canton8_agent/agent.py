@@ -1,5 +1,7 @@
 """Safe orchestration for one ledger-enforced mandate charge."""
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from hashlib import sha256
 import time

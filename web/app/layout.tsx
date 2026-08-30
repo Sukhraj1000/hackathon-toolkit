@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import "./showcase.css";
 
 export const metadata: Metadata = {
   title: "D1 Spend-limited Agent Wallet",

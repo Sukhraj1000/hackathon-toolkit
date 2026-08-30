@@ -1,5 +1,7 @@
 """Agent-only JSON Ledger API adapter for the deployed mandate package."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Mapping
