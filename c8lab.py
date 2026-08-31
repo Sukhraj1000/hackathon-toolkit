@@ -138,6 +138,49 @@ def registry(path, body=None, method=None, timeout=30):
         REGISTRY + REGISTRY_PREFIX + path, body, headers, method, timeout)
 
 
+def registry_ready(timeout=5):
+    """Prove that the configured endpoint is the transfer-factory API.
+
+    A generic ``/health`` path can be swallowed by the scan frontend and return
+    unrelated HTML with HTTP 200. A deliberately incomplete transfer-factory
+    request is side-effect free and must reach the registry's schema decoder,
+    which rejects the missing ``choiceArguments`` field with HTTP 400.
+    """
+    if not REGISTRY:
+        raise LabError("C8_REGISTRY is not set. Transfers need the token "
+                       "registry. On LocalNet it defaults to localhost:4000.")
+    path = "/registry/transfer-instruction/v1/transfer-factory"
+    url = REGISTRY + REGISTRY_PREFIX + path
+    headers = {"Content-Type": "application/json"}
+    if REGISTRY_HOST:
+        headers["Host"] = REGISTRY_HOST
+    request = urllib.request.Request(
+        url, method="POST", data=b"{}", headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status = getattr(response, "status", 200)
+            detail = response.read().decode(errors="replace")[:600]
+    except urllib.error.HTTPError as error:
+        try:
+            detail = error.read().decode(errors="replace")[:600]
+        finally:
+            error.close()
+        if (error.code == 400
+                and "choiceArguments" in detail
+                and "Missing required field" in detail):
+            return url
+        raise LabError(
+            f"registry capability probe returned unexpected HTTP {error.code} "
+            f"from {url}\n  {detail}")
+    except urllib.error.URLError as error:
+        raise LabError(f"cannot reach {url}: {error.reason}")
+    except (TimeoutError, OSError) as error:
+        raise LabError(f"network error calling {url}: {error}")
+    raise LabError(
+        f"registry capability probe unexpectedly returned HTTP {status} from "
+        f"{url}; expected the transfer-factory schema rejection\n  {detail}")
+
+
 def ledger_end(sub=USER):
     return call("/v2/state/ledger-end", sub=sub)["offset"]
 

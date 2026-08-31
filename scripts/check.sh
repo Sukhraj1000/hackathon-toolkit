@@ -22,6 +22,7 @@ npm ci --no-audit --no-fund
 npm test
 npm run typecheck
 npm run build
+npm run test:route
 
 printf '\nAll offline checks passed.\n'
 printf 'For the real ledger demo, start LocalNet and run: python3 agent_wallet_mvp.py doctor\n'

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+import re
 from typing import Any, Mapping
 
 import c8lab
@@ -18,7 +19,20 @@ CHARGE_RECEIPT = "#c8-agent-wallet:Mandate:ChargeReceipt"
 
 
 def _parse_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    normalized = value.replace("Z", "+00:00")
+    # Python 3.9 accepts only selected ISO-8601 fractional widths. Canton may
+    # emit any precision (for example five digits), so normalize to the six
+    # microsecond digits understood consistently across supported runtimes.
+    match = re.fullmatch(
+        r"(?P<prefix>.*?)(?:\.(?P<fraction>\d+))?"
+        r"(?P<offset>[+-]\d{2}:\d{2})",
+        normalized,
+    )
+    if match and match.group("fraction"):
+        fraction = match.group("fraction")[:6].ljust(6, "0")
+        normalized = (
+            f"{match.group('prefix')}.{fraction}{match.group('offset')}")
+    return datetime.fromisoformat(normalized)
 
 
 def _create_argument(event: Mapping[str, Any]) -> Mapping[str, Any]:

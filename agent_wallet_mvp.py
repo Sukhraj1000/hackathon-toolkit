@@ -430,8 +430,10 @@ def run_doctor() -> int:
     else:
         registry_url = c8lab.REGISTRY + c8lab.REGISTRY_PREFIX
         try:
-            c8lab.registry("/health", timeout=5)
-            checks.append(f"registry          {_safe_text(registry_url)} (ready)")
+            c8lab.registry_ready(timeout=5)
+            checks.append(
+                f"registry          {_safe_text(registry_url)} "
+                "(transfer API ready)")
         except c8lab.LabError as exc:
             failures.append(
                 f"LocalNet registry unavailable at {_safe_text(registry_url)}: "

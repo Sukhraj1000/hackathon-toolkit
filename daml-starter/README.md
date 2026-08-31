@@ -1,6 +1,6 @@
 # Daml starter
 
-This directory builds the submission package `c8-agent-wallet` version `1.0.0`.
+This directory builds the submission package `c8-agent-wallet` version `1.0.1`.
 It contains a ledger-enforced spending mandate for one owner and one designated
 agent. The API is not the authorization boundary: cap, merchant, expiry, and
 revocation rules are checked by Daml.

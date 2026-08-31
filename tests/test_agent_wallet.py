@@ -277,6 +277,27 @@ class DecisionTests(unittest.TestCase):
 
 
 class C8LedgerClientTests(unittest.TestCase):
+    def test_canton_timestamp_fraction_is_python39_compatible(self):
+        parsed = ledger_module._parse_time("2026-08-31T13:28:27.32502Z")
+
+        self.assertEqual(325020, parsed.microsecond)
+        self.assertEqual(datetime.timedelta(0), parsed.utcoffset())
+
+    def test_duplicate_active_mandate_labels_fail_closed(self):
+        duplicate_usages = [
+            {"contractId": "usage-one", "createArgument": {
+                "mandateId": "mandate-1"}},
+            {"contractId": "usage-two", "createArgument": {
+                "mandateId": "mandate-1"}},
+        ]
+        with mock.patch.object(
+                ledger_module, "_active_events",
+                return_value=duplicate_usages):
+            with self.assertRaisesRegex(AgentError, "found 2"):
+                C8LedgerClient(
+                    "agent::1", "agent-user").current_authorization(
+                        "mandate-1")
+
     def test_charge_command_acts_only_as_agent_and_matches_daml_shape(self):
         client = C8LedgerClient("agent::1", "agent-user")
         with mock.patch.object(
