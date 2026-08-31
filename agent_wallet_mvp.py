@@ -425,11 +425,17 @@ def run_doctor() -> int:
         checks.append(f"token admin      {_safe_text(c8lab.admin_party())}")
     except c8lab.LabError as exc:
         failures.append(f"LocalNet ledger unavailable: {_safe_text(exc)}")
-    if c8lab.REGISTRY:
-        checks.append(
-            f"registry          {_safe_text(c8lab.REGISTRY + c8lab.REGISTRY_PREFIX)}")
-    else:
+    if not c8lab.REGISTRY:
         failures.append("C8_REGISTRY is not configured")
+    else:
+        registry_url = c8lab.REGISTRY + c8lab.REGISTRY_PREFIX
+        try:
+            c8lab.registry("/health", timeout=5)
+            checks.append(f"registry          {_safe_text(registry_url)} (ready)")
+        except c8lab.LabError as exc:
+            failures.append(
+                f"LocalNet registry unavailable at {_safe_text(registry_url)}: "
+                f"{_safe_text(exc)}")
 
     print("CLI DOCTOR")
     for check in checks:

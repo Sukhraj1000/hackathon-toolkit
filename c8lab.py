@@ -126,7 +126,7 @@ def call(path, body=None, sub=USER, method=None):
                      "Content-Type": "application/json"}, method)
 
 
-def registry(path, body=None, method=None):
+def registry(path, body=None, method=None, timeout=30):
     """Token registry call. Public on most deployments, no token."""
     if not REGISTRY:
         raise LabError("C8_REGISTRY is not set. Transfers need the token "
@@ -134,7 +134,8 @@ def registry(path, body=None, method=None):
     headers = {"Content-Type": "application/json"}
     if REGISTRY_HOST:
         headers["Host"] = REGISTRY_HOST
-    return _request(REGISTRY + REGISTRY_PREFIX + path, body, headers, method)
+    return _request(
+        REGISTRY + REGISTRY_PREFIX + path, body, headers, method, timeout)
 
 
 def ledger_end(sub=USER):

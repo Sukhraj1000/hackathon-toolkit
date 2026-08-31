@@ -48,7 +48,7 @@ The agent execution environment has no route to raw Ledger API, shell, Docker, a
 7. **Canonical identities:** full Canton Party IDs and token/admin IDs are stored and compared; display names never authorize.
 8. **Checked equals executed:** sender, receiver, amount, token, and admin in settlement are derived from values checked by Daml.
 9. **Atomicity:** payment, usage successor, idempotency marker, and receipt all commit or all roll back.
-10. **At-most-once business action:** an active ledger uniqueness marker prevents a duplicate mandate/business reference from paying twice.
+10. **At-most-once business action:** the active usage chain retains up to 256 committed references, rejects duplicates, and then requires mandate rotation rather than growing forever.
 11. **Ledger-order revocation:** a charge ordered after archive of the static mandate fails its fetch; a charge already ordered before revoke may commit.
 12. **Auditable output:** committed receipts are ledger truth; rejected attempts are separately labelled runtime evidence.
 

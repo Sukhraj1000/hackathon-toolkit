@@ -89,9 +89,26 @@ testMandateModels = script do
       allowedCounterparties = [merchant]
       expiresAt = deadline
 
+  -- The contract invariant, not only the provisioning script, requires two
+  -- distinct principals.
+  submitMustFail owner do
+    createCmd Mandate with
+      mandateId = "same-principal-mandate"
+      owner
+      agent = owner
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+
   usageCid <- submit (actAs [owner, agent]) do
     createCmd (makeMandateUsage
       mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 [])
+  submitMustFail owner do
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner owner "Amulet" admin 100.0 [merchant]
       deadline 0.0 [])
 
   -- Neither owner nor agent can fabricate a replacement usage alone.
@@ -208,6 +225,19 @@ testMandateChargeHappyPath = script do
         businessReference = "forged-receipt"
   submitMustFail owner do createCmd forgedReceipt
   submitMustFail agent do createCmd forgedReceipt
+  submitMustFail owner do
+    createCmd ChargeReceipt with
+      mandateCid
+      mandateId
+      owner
+      agent = owner
+      merchant
+      instrumentId = "Amulet"
+      amount = 1.0
+      spentBefore = 0.0
+      spentAfter = 1.0
+      chargedAt = now
+      businessReference = "same-principal-receipt"
   assertAuthorizationState agent mandateCid usage0Cid 0.0 0
 
   -- A normal under-cap charge advances usage and emits exactly one receipt.
@@ -550,8 +580,65 @@ testMandateInvalidPolicy = script do
       totalCap = -1.0
       allowedCounterparties = [merchant]
       expiresAt = deadline
+  submitMustFail owner do
+    createCmd MandateProposal with
+      mandateId = "same-owner-agent"
+      owner
+      agent = owner
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
   proposals <- query @MandateProposal owner
   assert (null proposals)
+  pure ()
+
+
+testMandateReferenceLimit : Script ()
+testMandateReferenceLimit = script do
+  owner <- allocateParty "ReferenceLimitOwner"
+  agent <- allocateParty "ReferenceLimitAgent"
+  merchant <- allocateParty "ReferenceLimitMerchant"
+  admin <- allocateParty "ReferenceLimitTokenAdmin"
+  now <- getTime
+  let deadline = addRelTime now (hours 24)
+  let mandateId = "reference-limit-mandate"
+  let referencesAtLimit = replicate maxProcessedReferences "already-used"
+
+  proposalCid <- submit owner do
+    createCmd MandateProposal with
+      mandateId
+      owner
+      agent
+      instrumentId = "Amulet"
+      expectedAdmin = admin
+      totalCap = 100.0
+      allowedCounterparties = [merchant]
+      expiresAt = deadline
+  (mandateCid, _) <- submit agent do exerciseCmd proposalCid Accept
+  cappedUsageCid <- submit (actAs [owner, agent]) do
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 referencesAtLimit)
+  (_, tokenExecution) <-
+    setupTestSettlement admin owner 100.0 TestTransferCompleted
+
+  submitMustFail agent do
+    exerciseCmd cappedUsageCid Charge with
+      merchant
+      amount = 1.0
+      businessReference = "new-reference"
+      tokenExecution
+  Some cappedUsage <- queryContractId agent cappedUsageCid
+  assert (length cappedUsage.processedReferences == maxProcessedReferences)
+  receipts <- query @ChargeReceipt agent
+  assert (null receipts)
+
+  submitMustFail (actAs [owner, agent]) do
+    createCmd (makeMandateUsage
+      mandateCid mandateId owner agent "Amulet" admin 100.0 [merchant]
+      deadline 0.0 ("overflow" :: referencesAtLimit))
   pure ()
 
 

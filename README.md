@@ -37,11 +37,14 @@ For the real demo, follow [`SETUP.md`](SETUP.md), start LocalNet, then run:
 python3 agent_wallet_mvp.py doctor
 cd web
 npm ci
+export C8_WALLET_OPERATOR_TOKEN="$(openssl rand -hex 32)"
 npm run dev
 ```
 
-Open <http://127.0.0.1:3000>, run **Check environment**, then follow the three
-numbered steps. The same flow is available from the CLI:
+Open `http://127.0.0.1:3000`, paste that same operator token into the
+password field, then run **Check environment** and follow the three numbered
+steps. The server rejects every wallet API action when the token is missing,
+weak, or incorrect. The same flow is available from the CLI:
 
 ```bash
 python3 agent_wallet_mvp.py demo

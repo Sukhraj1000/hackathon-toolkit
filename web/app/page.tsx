@@ -114,6 +114,7 @@ function short(value: string): string {
 
 export default function WalletDashboard() {
   const [running, setRunning] = useState<Action | null>(null);
+  const [operatorToken, setOperatorToken] = useState("");
   const [environmentState, setEnvironmentState] =
     useState<EnvironmentState>("unchecked");
   const [activity, setActivity] = useState<Activity[]>([]);
@@ -139,7 +140,10 @@ export default function WalletDashboard() {
     try {
       const response = await fetch("/api/wallet", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Authorization": `Bearer ${operatorToken}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ action, ...values }),
       });
       result = (await response.json()) as ApiResponse;
@@ -224,6 +228,7 @@ export default function WalletDashboard() {
   }), [statusOutput, statementOutput]);
 
   const busy = running !== null;
+  const operatorReady = operatorToken.length >= 32;
   const hasWallet = metrics.status !== "—";
   const environmentReady = environmentState === "ready";
   const latestActivity = activity[0];
@@ -258,24 +263,42 @@ export default function WalletDashboard() {
               recipients, expiry and revocation on the ledger.
             </p>
           </div>
-          <div className="environmentCheck">
-            <button
-              className="button buttonSecondary"
-              disabled={busy}
-              onClick={() => run("doctor")}
-              type="button"
-            >
-              {running === "doctor" ? "Checking environment…" : "Check environment"}
-            </button>
-            <span>
-              {environmentState === "ready"
-                ? "Daml CLI, ledger and registry are reachable"
-                : environmentState === "offline"
-                  ? "Start LocalNet, then run this check again"
-                  : environmentState === "checking"
-                    ? "Testing the Daml CLI, ledger and registry"
-                    : "Checks the Daml CLI, ledger and registry"}
-            </span>
+          <div className="environmentPanel">
+            <label className="operatorAccess" htmlFor="operator-token">
+              <span>Operator token</span>
+              <input
+                autoComplete="off"
+                id="operator-token"
+                minLength={32}
+                onChange={(event) => setOperatorToken(event.target.value)}
+                placeholder="Paste the server-only token"
+                spellCheck={false}
+                type="password"
+                value={operatorToken}
+              />
+              <small>Held in this page only and never saved by the wallet UI.</small>
+            </label>
+            <div className="environmentCheck">
+              <button
+                className="button buttonSecondary"
+                disabled={busy || !operatorReady}
+                onClick={() => run("doctor")}
+                type="button"
+              >
+                {running === "doctor" ? "Checking environment…" : "Check environment"}
+              </button>
+              <span>
+                {!operatorReady
+                  ? "Enter the configured operator token first"
+                  : environmentState === "ready"
+                    ? "Daml CLI, ledger and registry are reachable"
+                    : environmentState === "offline"
+                      ? "Check the token and LocalNet, then try again"
+                      : environmentState === "checking"
+                        ? "Testing the Daml CLI, ledger and registry"
+                        : "Checks the Daml CLI, ledger and registry"}
+              </span>
+            </div>
           </div>
         </section>
 

@@ -64,6 +64,11 @@ The stable business reference is the durable replay boundary. Generate it from
 the upstream order or invoice identity, persist it before submitting, and never
 replace it merely because a request timed out.
 
+Each mandate retains at most 256 committed references. The 257th charge is
+rejected on-ledger, so exact replay protection stays bounded rather than making
+`MandateUsage` grow forever. Revoke or let the old mandate expire, then create a
+new mandate when that limit is reached.
+
 After revocation, the archived `Mandate` is no longer usable, but the active
 terminal `MandateUsage` retains the immutable policy snapshot. The adapter marks
 that authorization `revoked`, rejects it for purchases, and can still render a

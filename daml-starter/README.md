@@ -67,6 +67,8 @@ assertMsg "usage mandate id does not match mandate"
 assertMsg "amount must be positive" (amount > 0.0)
 assertMsg "business reference already processed"
   (businessReference `notElem` processedReferences)
+assertMsg "mandate charge limit reached; create a new mandate"
+  (length processedReferences < maxProcessedReferences)
 assertMsg "counterparty not allowed"
   (merchant `elem` mandate.allowedCounterparties)
 assertMsg "total cap exceeded" (spentAfter <= mandate.totalCap)

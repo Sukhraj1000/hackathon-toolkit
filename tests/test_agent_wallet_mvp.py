@@ -360,6 +360,7 @@ class MvpCommandTests(unittest.TestCase):
         with mock.patch.object(agent_wallet_mvp.c8lab, "IDP", ""), \
              mock.patch.object(agent_wallet_mvp.c8lab, "ACCESS_TOKEN", ""), \
              mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY", "http://localhost:4000"), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "registry", return_value={}), \
              mock.patch.object(agent_wallet_mvp.c8lab, "ledger_end", return_value=42), \
              mock.patch.object(agent_wallet_mvp.c8lab, "admin_party", return_value="admin::1"), \
              mock.patch.object(
@@ -374,6 +375,32 @@ class MvpCommandTests(unittest.TestCase):
         self.assertEqual(1, status)
         self.assertIn("Daml CLI         3.4.10", stdout.getvalue())
         self.assertIn("Java runtime failed", stdout.getvalue())
+
+    def test_doctor_fails_when_registry_health_is_unreachable(self):
+        tool_result = mock.Mock(stdout="3.4.10\n", stderr="")
+        stdout = io.StringIO()
+        with mock.patch.object(agent_wallet_mvp.c8lab, "IDP", ""), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "ACCESS_TOKEN", ""), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY", "http://localhost:4000"), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY_PREFIX", ""), \
+             mock.patch.object(
+                 agent_wallet_mvp.c8lab, "registry",
+                 side_effect=agent_wallet_mvp.c8lab.LabError("connection refused")) as registry, \
+             mock.patch.object(agent_wallet_mvp.c8lab, "ledger_end", return_value=42), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "admin_party", return_value="admin::1"), \
+             mock.patch.object(
+                 agent_wallet_mvp.shutil, "which",
+                 side_effect=lambda name: f"/fake/{name}"), \
+             mock.patch.object(
+                 agent_wallet_mvp.subprocess, "run",
+                 side_effect=[tool_result, tool_result]), \
+             mock.patch("sys.stdout", stdout):
+            status = agent_wallet_mvp.run_doctor()
+
+        self.assertEqual(1, status)
+        registry.assert_called_once_with("/health", timeout=5)
+        self.assertIn("LocalNet registry unavailable", stdout.getvalue())
+        self.assertNotIn("ok    registry", stdout.getvalue())
 
 
 if __name__ == "__main__":

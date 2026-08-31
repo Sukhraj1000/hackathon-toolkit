@@ -3,6 +3,48 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--faint) 16%, transparent);
 }
 
+.environmentPanel {
+  display: grid;
+  gap: 10px;
+  min-width: min(100%, 360px);
+}
+
+.operatorAccess {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.operatorAccess > span {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.operatorAccess input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--ink);
+  background: var(--panel);
+  font: inherit;
+  font-size: 14px;
+}
+
+.operatorAccess input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.operatorAccess small {
+  color: var(--faint);
+  line-height: 1.35;
+}
+
 .network-checking .statusDot {
   background: #b7791f;
   box-shadow: 0 0 0 3px #b7791f24;

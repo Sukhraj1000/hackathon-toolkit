@@ -16,9 +16,10 @@ else
   printf '\n== Daml checks skipped (put Daml and Java on PATH to enable) ==\n'
 fi
 
-printf '\n== Web install, typecheck and production build ==\n'
+printf '\n== Web install, authentication tests, typecheck and production build ==\n'
 cd "$repo_root/web"
 npm ci --no-audit --no-fund
+npm test
 npm run typecheck
 npm run build
 

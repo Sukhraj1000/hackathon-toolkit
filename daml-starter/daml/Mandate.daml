@@ -14,6 +14,12 @@ maxBusinessReferenceLength : Int
 maxBusinessReferenceLength = 128
 
 
+-- Keep exact replay protection bounded. A mandate is intentionally rotated
+-- after this many successful charges instead of growing one contract forever.
+maxProcessedReferences : Int
+maxProcessedReferences = 256
+
+
 isBoundedNonEmptyText : Int -> Text -> Bool
 isBoundedNonEmptyText maximumLength value =
   Text.isNotEmpty (Text.trim value) && Text.length value <= maximumLength
@@ -67,6 +73,7 @@ template Mandate
   where
     ensure
       isBoundedNonEmptyText maxMandateIdLength mandateId
+        && owner /= agent
         && totalCap > 0.0
 
     signatory owner
@@ -98,10 +105,15 @@ template MandateUsage
   where
     ensure
       isBoundedNonEmptyText maxMandateIdLength mandateId
+        && owner /= agent
         && Text.isNotEmpty (Text.trim instrumentId)
         && totalCap > 0.0
         && spent >= 0.0
         && spent <= totalCap
+        && length processedReferences <= maxProcessedReferences
+        && all
+          (isBoundedNonEmptyText maxBusinessReferenceLength)
+          processedReferences
 
     signatory owner, agent
 
@@ -149,6 +161,9 @@ template MandateUsage
         assertMsg
           "business reference already processed"
           (businessReference `notElem` processedReferences)
+        assertMsg
+          "mandate charge limit reached; create a new mandate"
+          (length processedReferences < maxProcessedReferences)
         assertMsg
           "counterparty not allowed"
           (merchant `elem` mandate.allowedCounterparties)
@@ -284,6 +299,7 @@ template ChargeReceipt
           maxBusinessReferenceLength
           businessReference
         && amount > 0.0
+        && owner /= agent
         && spentBefore >= 0.0
         && spentAfter == spentBefore + amount
 
@@ -305,6 +321,7 @@ template MandateProposal
   where
     ensure
       isBoundedNonEmptyText maxMandateIdLength mandateId
+        && owner /= agent
         && totalCap > 0.0
 
     signatory owner
