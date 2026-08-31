@@ -1,6 +1,6 @@
 # Daml starter
 
-This directory builds the submission package `c8-agent-wallet` version `1.0.0`.
+This directory builds the submission package `c8-agent-wallet` version `1.0.1`.
 It contains a ledger-enforced spending mandate for one owner and one designated
 agent. The API is not the authorization boundary: cap, merchant, expiry, and
 revocation rules are checked by Daml.
@@ -67,6 +67,8 @@ assertMsg "usage mandate id does not match mandate"
 assertMsg "amount must be positive" (amount > 0.0)
 assertMsg "business reference already processed"
   (businessReference `notElem` processedReferences)
+assertMsg "mandate charge limit reached; create a new mandate"
+  (length processedReferences < maxProcessedReferences)
 assertMsg "counterparty not allowed"
   (merchant `elem` mandate.allowedCounterparties)
 assertMsg "total cap exceeded" (spentAfter <= mandate.totalCap)

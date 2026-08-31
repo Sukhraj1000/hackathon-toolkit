@@ -6,6 +6,8 @@ the actual offer against the current mandate before ``MandateAgent`` can submit
 the ledger-enforced charge.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from decimal import Decimal
 import json

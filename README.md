@@ -1,46 +1,81 @@
-# Canton hackathon toolkit
+# Spend-limited agent wallet on Canton
 
-Get to your first Canton transaction without installing much.
+An agent can choose what to buy, but it cannot choose the wallet rules. The
+owner grants a Daml mandate with a total cap, approved merchants, an expiry and
+an owner-only revoke path. Every accepted purchase and rejected bypass attempt
+is backed by the Canton ledger.
 
-`c8lab.py` is Python 3, **stdlib only**, no `pip install`. That is deliberate:
-some laptops are locked down and you do not want to debug pip on the day.
+## What judges should see
 
-It runs against two targets:
+1. **Create a funded mandate** and complete the first allowed Amulet purchase.
+2. **Give the agent a plain-language goal.** It ranks public offers, while
+   trusted code resolves the canonical payment fields.
+3. **Run the boundary proof.** Over-cap and unapproved-merchant charges fail,
+   the agent cannot revoke, the owner can revoke, and rejected attempts create
+   no receipts.
 
-- **LocalNet**, a whole Canton network in Docker on your laptop. The default.
-- **DevNet**, the shared Cantor8 node. Set four environment variables.
+The browser shows the decision, the guardrail that allowed it, live mandate
+state and ledger receipts. The default planner is deterministic; setting
+`OPENAI_API_KEY` adds model ranking without giving the model ledger credentials
+or arbitrary tools.
 
-| File | What |
+> **Real ledger path:** the UI does not fabricate successful transactions.
+> Wallet actions require Splice LocalNet, the Daml CLI and the registry to be
+> reachable. The environment check says exactly which prerequisite is missing.
+
+## Quick start
+
+Offline code checks need Python 3.9+, Node.js 20+ and no ledger:
+
+```bash
+./scripts/check.sh
+```
+
+For the real demo, follow [`SETUP.md`](SETUP.md), start LocalNet, then run:
+
+```bash
+python3 agent_wallet_mvp.py doctor
+cd web
+npm ci
+export C8_WALLET_OPERATOR_TOKEN="$(openssl rand -hex 32)"
+npm run dev
+```
+
+Open `http://127.0.0.1:3000`, paste that same operator token into the
+password field, then run **Check environment** and follow the three numbered
+steps. The server rejects every wallet API action when the token is missing,
+weak, or incorrect. The same flow is available from the CLI:
+
+```bash
+python3 agent_wallet_mvp.py demo
+python3 agent_wallet_mvp.py mission \
+  --goal "Buy the best approved data service within my remaining allowance"
+python3 agent_wallet_mvp.py proof
+```
+
+See [`MVP.md`](MVP.md) for the full operator script and expected evidence.
+
+## Repository map
+
+`c8lab.py` and the agent adapter are Python stdlib only; no `pip install` is
+required.
+
+| Path | Purpose |
 |---|---|
-| `CHALLENGES.md` | The problems, and what to build |
-| `SETUP.md` | Install LocalNet, and the Daml toolchain if you need it |
-| `API.md` | Tested cheat sheet of the APIs you will use, and what needs a token |
-| `TROUBLESHOOTING.md` | Every error we actually hit, and the fix |
-| `LOCALNET_TEAM_ACCESS.md` | Least-privilege shared LocalNet setup for the agent-wallet demo |
-| `AGENT_WALLET.md` | Agent submitter, read-only resolver, reconciliation and safe retry design |
-| `MVP.md` | One-command LocalNet purchase demo and intentionally reduced scope |
-| `web/` | Next.js and TypeScript control surface for the MVP CLI |
-| `c8lab.py` | The lab |
-| `canton8_agent/` | Stdlib adapter for atomic `MandateUsage.Charge` execution |
-| `daml-starter/` | Working Daml to copy from, including the mandate task |
+| `web/` | Next.js control surface for the guided demo |
+| `agent_wallet_mvp.py` | One-command wallet, mission and proof CLI |
+| `canton8_agent/` | Least-privilege agent, ledger and token resolver adapters |
+| `daml-starter/` | Production mandate package |
 | `daml-starter-test/` | Test-only token implementation and Daml Script coverage |
+| `scripts/check.sh` | Python tests plus web typecheck and production build |
+| `MVP.md` | Judge flow, output and deliberately reduced scope |
+| `AGENT_WALLET.md` | Security boundary, reconciliation and retry design |
+| `SETUP.md` | LocalNet and Daml prerequisites |
+| `TROUBLESHOOTING.md` | Known setup failures and fixes |
+| `API.md` | Ledger and registry API cheat sheet |
+| `CHALLENGES.md` | Original hackathon challenge notes |
 
-Start with `SETUP.md`, come back here.
-
-For the working agent-wallet demo, start LocalNet and run
-`python3 agent_wallet_mvp.py doctor`, followed by
-`python3 agent_wallet_mvp.py demo`. The CLI also provides an autonomous
-`mission` command and a one-command adversarial/revocation `proof`, alongside
-`status`, `buy`, and `statement`; see `MVP.md` for the full demo path.
-
-To use the browser control surface, run `npm install` and `npm run dev` from
-`web/`, then open `http://127.0.0.1:3000`. The AI planner is optional: set
-`OPENAI_API_KEY` in the server environment to enable it, or leave it unset for
-the deterministic policy planner.
-
-**Looking for the problems?** They are in [`CHALLENGES.md`](CHALLENGES.md).
-
-## The lab
+## Toolkit reference: the lab
 
 Six steps. This is the shape of every Canton app.
 

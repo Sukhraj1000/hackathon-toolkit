@@ -1,4 +1,4 @@
-exam# Troubleshooting
+# Troubleshooting
 
 Every error below was hit for real while building this toolkit, in this order.
 If you are stuck, `python3 c8lab.py` first. It checks auth, the ledger and your

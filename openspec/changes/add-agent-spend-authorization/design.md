@@ -102,7 +102,7 @@ The agent user cannot read arbitrary owner contracts. If Token Standard settleme
 
 ### 10. Make charge retries idempotent on-ledger
 
-Every charge has an owner-scoped business reference. A persistent Daml uniqueness marker or receipt contract key prevents the same `(mandateId, businessReference)` from committing twice across usage successors. Ledger command IDs are also stable for transport retries, but backend command deduplication is defense-in-depth rather than the sole replay control.
+Every charge has a business reference scoped to one immutable mandate contract. The consuming `MandateUsage` successor retains committed references and rejects duplicates. The list is capped at 256 entries; after that the ledger rejects further charges and the owner must rotate to a new mandate. This keeps exact per-`mandateCid` replay protection without unbounded contract growth. `mandateId` remains an operator label and must be freshly generated for each rotation; duplicate active labels make the adapter fail closed. Ledger command IDs are also stable for transport retries, but backend command deduplication is defense-in-depth rather than the sole replay control.
 
 ### 11. Provide two independent kill switches
 

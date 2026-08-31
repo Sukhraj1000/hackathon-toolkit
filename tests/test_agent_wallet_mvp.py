@@ -1,11 +1,13 @@
 import datetime
 from decimal import Decimal
+import email.message
 import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+import urllib.error
 
 import agent_wallet_mvp
 from canton8_agent import (
@@ -348,6 +350,92 @@ class MvpCommandTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertTrue(payload["revoked"])
         self.assertEqual("rejected", payload["steps"][0]["status"])
+
+    def test_doctor_rejects_an_unusable_java_runtime(self):
+        daml_result = mock.Mock(
+            stdout="SDK versions:\n  3.4.10  (default SDK version for new projects)\n",
+            stderr="",
+        )
+        java_error = agent_wallet_mvp.subprocess.CalledProcessError(
+            1, ["/fake/java", "-version"], stderr="Unable to locate a Java Runtime")
+        stdout = io.StringIO()
+        with mock.patch.object(agent_wallet_mvp.c8lab, "IDP", ""), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "ACCESS_TOKEN", ""), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY", "http://localhost:4000"), \
+             mock.patch.object(
+                 agent_wallet_mvp.c8lab, "registry_ready",
+                 return_value="http://localhost:4000/registry/transfer-instruction/v1/transfer-factory"), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "ledger_end", return_value=42), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "admin_party", return_value="admin::1"), \
+             mock.patch.object(
+                 agent_wallet_mvp.shutil, "which",
+                 side_effect=lambda name: f"/fake/{name}"), \
+             mock.patch.object(
+                 agent_wallet_mvp.subprocess, "run",
+                 side_effect=[daml_result, java_error]), \
+             mock.patch("sys.stdout", stdout):
+            status = agent_wallet_mvp.run_doctor()
+
+        self.assertEqual(1, status)
+        self.assertIn("Daml CLI         3.4.10", stdout.getvalue())
+        self.assertIn("Java runtime failed", stdout.getvalue())
+
+    def test_doctor_fails_when_registry_health_is_unreachable(self):
+        tool_result = mock.Mock(stdout="3.4.10\n", stderr="")
+        stdout = io.StringIO()
+        with mock.patch.object(agent_wallet_mvp.c8lab, "IDP", ""), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "ACCESS_TOKEN", ""), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY", "http://localhost:4000"), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY_PREFIX", ""), \
+             mock.patch.object(
+                 agent_wallet_mvp.c8lab, "registry_ready",
+                 side_effect=agent_wallet_mvp.c8lab.LabError("connection refused")) as registry, \
+             mock.patch.object(agent_wallet_mvp.c8lab, "ledger_end", return_value=42), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "admin_party", return_value="admin::1"), \
+             mock.patch.object(
+                 agent_wallet_mvp.shutil, "which",
+                 side_effect=lambda name: f"/fake/{name}"), \
+             mock.patch.object(
+                 agent_wallet_mvp.subprocess, "run",
+                 side_effect=[tool_result, tool_result]), \
+             mock.patch("sys.stdout", stdout):
+            status = agent_wallet_mvp.run_doctor()
+
+        self.assertEqual(1, status)
+        registry.assert_called_once_with(timeout=5)
+        self.assertIn("LocalNet registry unavailable", stdout.getvalue())
+        self.assertNotIn("ok    registry", stdout.getvalue())
+
+    def test_registry_readiness_rejects_unrelated_html_success(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.read.return_value = b"<html><title>Scan</title></html>"
+        with mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY", "http://localhost:4000"), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY_PREFIX", ""), \
+             mock.patch.object(
+                 agent_wallet_mvp.c8lab.urllib.request, "urlopen",
+                 return_value=response):
+            with self.assertRaisesRegex(
+                    agent_wallet_mvp.c8lab.LabError,
+                    "unexpectedly returned HTTP 200"):
+                agent_wallet_mvp.c8lab.registry_ready(timeout=5)
+
+    def test_registry_readiness_accepts_factory_schema_rejection(self):
+        url = (
+            "http://localhost:4000/registry/transfer-instruction/v1/"
+            "transfer-factory")
+        error = urllib.error.HTTPError(
+            url, 400, "Bad Request", email.message.Message(),
+            io.BytesIO(
+                b"DecodingFailure at .choiceArguments: Missing required field"))
+        with mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY", "http://localhost:4000"), \
+             mock.patch.object(agent_wallet_mvp.c8lab, "REGISTRY_PREFIX", ""), \
+             mock.patch.object(
+                 agent_wallet_mvp.c8lab.urllib.request, "urlopen",
+                 side_effect=error):
+            self.assertEqual(
+                url, agent_wallet_mvp.c8lab.registry_ready(timeout=5))
 
 
 if __name__ == "__main__":

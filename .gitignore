@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 .DS_Store
 .env
+.env.*
+!web/.env.example
 .c8wallet-state.json
 # Machine-specific operator copies. The reviewed, least-privilege examples
 # under deployment/ are the only network configuration shipped by this repo.

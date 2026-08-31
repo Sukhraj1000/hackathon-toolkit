@@ -60,9 +60,21 @@ and after every failure, it searches for the matching `ChargeReceipt`.
 - Ambiguous network/5xx outcomes are reconciled before retrying.
 - Authorization and policy errors are terminal.
 
-The stable business reference is the durable replay boundary. Generate it from
-the upstream order or invoice identity, persist it before submitting, and never
-replace it merely because a request timed out.
+The stable business reference is the durable replay boundary within one
+immutable mandate contract. Generate it from the upstream order or invoice
+identity, persist it before submitting, and never replace it merely because a
+request timed out.
+
+Each mandate retains at most 256 committed references. The 257th charge is
+rejected on-ledger, so exact replay protection stays bounded rather than making
+`MandateUsage` grow forever. Revoke or let the old mandate expire, then create a
+new mandate when that limit is reached.
+
+`mandateId` is an operator-facing label, not a globally unique ledger key.
+Generate a fresh label when rotating a mandate. If duplicate active labels are
+present, the Python adapter fails closed instead of selecting one implicitly.
+The strict at-most-once guarantee is scoped to the immutable `mandateCid` and
+its consuming usage chain; a newly authorized mandate starts a new replay scope.
 
 After revocation, the archived `Mandate` is no longer usable, but the active
 terminal `MandateUsage` retains the immutable policy snapshot. The adapter marks

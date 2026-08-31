@@ -112,7 +112,7 @@ The owner SHALL be able to archive the static mandate without agent authorizatio
 
 ### Requirement: Ledger-enforced charge idempotency
 
-Every `Charge` SHALL include a non-empty owner-scoped business reference and SHALL maintain an on-ledger uniqueness marker across usage successors.
+Every `Charge` SHALL include a non-empty business reference scoped to one immutable `mandateCid` and SHALL maintain an on-ledger uniqueness marker across that mandate's usage successors. A mandate SHALL accept at most 256 committed references and reject later charges, preserving exact per-mandate-contract replay protection while bounding usage-state growth. `mandateId` SHALL be treated as an operator label rather than a globally unique ledger key; rotation starts a new replay scope, and duplicate active labels SHALL make the adapter fail closed.
 
 #### Scenario: Same purchase is retried
 

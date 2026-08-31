@@ -5,6 +5,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { NextResponse } from "next/server";
 
+import {
+  authorizeOperator,
+  withoutOperatorToken,
+} from "../../../lib/operator-auth.mjs";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
@@ -110,6 +115,31 @@ type ExecFailure = Error & {
 export async function POST(request: Request) {
   const started = Date.now();
 
+  const operatorAuth = authorizeOperator(
+    request.headers.get("authorization"),
+    process.env.C8_WALLET_OPERATOR_TOKEN,
+  );
+  if (operatorAuth === "missing-config") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Operator authentication is not configured. Set a server-only " +
+          "C8_WALLET_OPERATOR_TOKEN with at least 32 bytes.",
+      },
+      { status: 503 },
+    );
+  }
+  if (operatorAuth !== "authorized") {
+    return NextResponse.json(
+      { ok: false, error: "Valid operator authentication is required." },
+      {
+        status: 401,
+        headers: { "WWW-Authenticate": 'Bearer realm="agent-wallet"' },
+      },
+    );
+  }
+
   const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
   if (!contentType.startsWith("application/json")) {
     return NextResponse.json(
@@ -202,7 +232,7 @@ export async function POST(request: Request) {
   try {
     const { stdout, stderr } = await execFileAsync("python3", [cliPath, ...args], {
       cwd: repoRoot,
-      env: process.env,
+      env: withoutOperatorToken(process.env),
       timeout: 170_000,
       maxBuffer: 2 * 1024 * 1024,
     });

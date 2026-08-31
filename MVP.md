@@ -17,7 +17,7 @@ python3 agent_wallet_mvp.py doctor
 python3 agent_wallet_mvp.py demo
 ```
 
-The command builds and uploads `c8-agent-wallet-1.0.0.dar`, provisions fresh
+The command builds and uploads `c8-agent-wallet-1.0.1.dar`, provisions fresh
 least-privilege users, funds the owner with LocalNet test Canton Coin, waits for
 the merchant preapproval, and executes the existing `MandateAgent` flow. It
 does not persist credentials. It writes only party IDs, user IDs, and the

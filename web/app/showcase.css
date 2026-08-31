@@ -1,0 +1,109 @@
+.networkStatus .statusDot {
+  background: var(--faint);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--faint) 16%, transparent);
+}
+
+.environmentPanel {
+  display: grid;
+  gap: 10px;
+  min-width: min(100%, 360px);
+}
+
+.operatorAccess {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.operatorAccess > span {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.operatorAccess input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--ink);
+  background: var(--panel);
+  font: inherit;
+  font-size: 14px;
+}
+
+.operatorAccess input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.operatorAccess small {
+  color: var(--faint);
+  line-height: 1.35;
+}
+
+.network-checking .statusDot {
+  background: #b7791f;
+  box-shadow: 0 0 0 3px #b7791f24;
+  animation: environment-pulse 1.2s ease-in-out infinite;
+}
+
+.network-ready .statusDot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px #1a604824;
+}
+
+.network-offline {
+  color: var(--danger);
+}
+
+.network-offline .statusDot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px #9b353524;
+}
+
+.demoTruth {
+  display: flex;
+  gap: 0.45rem;
+  align-items: baseline;
+  margin: -20px 0 36px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 5px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.demoTruth strong {
+  flex: none;
+  color: var(--ink);
+}
+
+@keyframes environment-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (max-width: 680px) {
+  .demoTruth {
+    display: block;
+    margin-top: -12px;
+  }
+
+  .demoTruth strong {
+    display: block;
+    margin-bottom: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .network-checking .statusDot {
+    animation: none;
+  }
+}

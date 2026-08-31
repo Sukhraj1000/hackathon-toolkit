@@ -57,6 +57,14 @@ type ApiResponse = {
   data?: StructuredData;
 };
 type Activity = ApiResponse & { id: number; at: string };
+type EnvironmentState = "unchecked" | "checking" | "ready" | "offline";
+
+const environmentLabels: Record<EnvironmentState, string> = {
+  unchecked: "LocalNet not checked",
+  checking: "Checking LocalNet…",
+  ready: "LocalNet ready",
+  offline: "LocalNet unavailable",
+};
 
 const actionLabels: Record<Action, string> = {
   doctor: "Environment doctor",
@@ -106,6 +114,9 @@ function short(value: string): string {
 
 export default function WalletDashboard() {
   const [running, setRunning] = useState<Action | null>(null);
+  const [operatorToken, setOperatorToken] = useState("");
+  const [environmentState, setEnvironmentState] =
+    useState<EnvironmentState>("unchecked");
   const [activity, setActivity] = useState<Activity[]>([]);
   const [latestOutput, setLatestOutput] = useState(
     "Check the environment, then create a wallet to begin the D1 demo.",
@@ -124,11 +135,15 @@ export default function WalletDashboard() {
 
   const run = async (action: Action, values: Record<string, string> = {}) => {
     setRunning(action);
+    if (action === "doctor") setEnvironmentState("checking");
     let result: ApiResponse;
     try {
       const response = await fetch("/api/wallet", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Authorization": `Bearer ${operatorToken}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ action, ...values }),
       });
       result = (await response.json()) as ApiResponse;
@@ -144,6 +159,9 @@ export default function WalletDashboard() {
       result.output ||
       result.error ||
       (result.data ? structuredSummary(result.data) : "No output returned");
+    if (action === "doctor") {
+      setEnvironmentState(result.ok ? "ready" : "offline");
+    }
     setLatestOutput(output);
     if (result.ok && action === "status") setStatusOutput(result.output || "");
     if (result.ok && action === "statement") {
@@ -210,7 +228,9 @@ export default function WalletDashboard() {
   }), [statusOutput, statementOutput]);
 
   const busy = running !== null;
+  const operatorReady = operatorToken.length >= 32;
   const hasWallet = metrics.status !== "—";
+  const environmentReady = environmentState === "ready";
   const latestActivity = activity[0];
 
   return (
@@ -226,9 +246,9 @@ export default function WalletDashboard() {
               <span>Canton hackathon demo</span>
             </div>
           </div>
-          <div className="networkStatus">
+          <div className={`networkStatus network-${environmentState}`}>
             <span className="statusDot" aria-hidden="true" />
-            LocalNet test environment
+            {environmentLabels[environmentState]}
           </div>
         </div>
       </header>
@@ -243,18 +263,49 @@ export default function WalletDashboard() {
               recipients, expiry and revocation on the ledger.
             </p>
           </div>
-          <div className="environmentCheck">
-            <button
-              className="button buttonSecondary"
-              disabled={busy}
-              onClick={() => run("doctor")}
-              type="button"
-            >
-              {running === "doctor" ? "Checking environment…" : "Check environment"}
-            </button>
-            <span>Requires LocalNet and the Daml CLI</span>
+          <div className="environmentPanel">
+            <label className="operatorAccess" htmlFor="operator-token">
+              <span>Operator token</span>
+              <input
+                autoComplete="off"
+                id="operator-token"
+                minLength={32}
+                onChange={(event) => setOperatorToken(event.target.value)}
+                placeholder="Paste the server-only token"
+                spellCheck={false}
+                type="password"
+                value={operatorToken}
+              />
+              <small>Held in this page only and never saved by the wallet UI.</small>
+            </label>
+            <div className="environmentCheck">
+              <button
+                className="button buttonSecondary"
+                disabled={busy || !operatorReady}
+                onClick={() => run("doctor")}
+                type="button"
+              >
+                {running === "doctor" ? "Checking environment…" : "Check environment"}
+              </button>
+              <span>
+                {!operatorReady
+                  ? "Enter the configured operator token first"
+                  : environmentState === "ready"
+                    ? "Daml CLI, ledger and registry are reachable"
+                    : environmentState === "offline"
+                      ? "Check the token and LocalNet, then try again"
+                      : environmentState === "checking"
+                        ? "Testing the Daml CLI, ledger and registry"
+                        : "Checks the Daml CLI, ledger and registry"}
+              </span>
+            </div>
           </div>
         </section>
+
+        <p className="demoTruth">
+          <strong>Real ledger path.</strong> Successful purchases come from
+          LocalNet; the interface never fabricates a transaction.
+        </p>
 
         <section className="contractSummary" aria-labelledby="contract-heading">
           <div className="summaryIntro">
@@ -339,7 +390,11 @@ export default function WalletDashboard() {
                   </label>
                 </div>
                 <p className="fieldHelp">The cap must be higher than the first purchase.</p>
-                <button className="button buttonPrimary" disabled={busy} type="submit">
+                <button
+                  className="button buttonPrimary"
+                  disabled={busy || !environmentReady}
+                  type="submit"
+                >
                   {running === "demo" ? "Creating wallet…" : "Create wallet and purchase"}
                 </button>
               </div>
@@ -370,9 +425,15 @@ export default function WalletDashboard() {
                   />
                 </label>
                 <p className="fieldHelp">
-                  Uses the deterministic policy planner by default; model ranking is optional.
+                  {hasWallet
+                    ? "Uses the deterministic policy planner by default; model ranking is optional."
+                    : "Create the funded mandate in step 1 before running the agent."}
                 </p>
-                <button className="button buttonPrimary" disabled={busy} type="submit">
+                <button
+                  className="button buttonPrimary"
+                  disabled={busy || !environmentReady || !hasWallet}
+                  type="submit"
+                >
                   {running === "mission" ? "Evaluating approved offers…" : "Run agent purchase"}
                 </button>
 
@@ -427,7 +488,7 @@ export default function WalletDashboard() {
                 </div>
                 <button
                   className="button buttonSecondary"
-                  disabled={busy}
+                  disabled={busy || !environmentReady}
                   onClick={() => run("proof")}
                   type="button"
                 >
@@ -501,7 +562,11 @@ export default function WalletDashboard() {
                       />
                     </label>
                   </div>
-                  <button className="button buttonPrimary" disabled={busy} type="submit">
+                  <button
+                    className="button buttonPrimary"
+                    disabled={busy || !environmentReady || !hasWallet}
+                    type="submit"
+                  >
                     {running === "buy" ? "Submitting purchase…" : "Submit manual purchase"}
                   </button>
                 </form>
@@ -516,7 +581,12 @@ export default function WalletDashboard() {
                   <p className="sectionLabel">Current wallet</p>
                   <h2 id="wallet-state-heading">Mandate state</h2>
                 </div>
-                <button className="textButton" disabled={busy} onClick={handleRefresh} type="button">
+                <button
+                  className="textButton"
+                  disabled={busy || !environmentReady}
+                  onClick={handleRefresh}
+                  type="button"
+                >
                   {running === "status" || running === "statement" ? "Refreshing…" : "Refresh"}
                 </button>
               </div>
@@ -559,7 +629,7 @@ export default function WalletDashboard() {
                 </div>
                 <button
                   className="textButton"
-                  disabled={busy}
+                  disabled={busy || !environmentReady || !hasWallet}
                   onClick={() => run("statement")}
                   type="button"
                 >
